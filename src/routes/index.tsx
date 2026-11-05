@@ -47,7 +47,7 @@ const features = [
   {
     icon: Ticket,
     title: "Official CMRL Fares",
-    text: "Exact station-to-station fares based on official CMRL fare tables with 20% smart card/digital QR discounts.",
+    text: "CMRL station-pair fares from its published fare chart (last fare update: 22 February 2021); unsupported bus, rail and Yellow Line fares are not guessed.",
   },
   {
     icon: Sparkles,
@@ -225,7 +225,7 @@ function Index() {
             <div>
               <h4 className="font-semibold text-foreground mb-1">CMRL & MTC Published Fares</h4>
               <p>
-                Fare matrices reflect official CMRL station-to-station tables (chennaimetrorail.org)
+                CMRL fare chart (last fare update: 22 February 2021); confirm the latest ticket conditions with CMRL
                 and MTC fare stages. "Fare unavailable" is displayed if unverified.
               </p>
             </div>
