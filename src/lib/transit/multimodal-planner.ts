@@ -266,22 +266,26 @@ export async function planMultimodalJourneys(
   preferredMode?: ModePreference,
   modeConstraint?: ModeConstraint,
 ): Promise<MultimodalJourneyOption[]> {
-  const resolvedOrigin = resolveLocation(origin);
-  const resolvedDestination = resolveLocation(destination);
-  const oClean = resolvedOrigin.resolved || origin.trim();
-  const dClean = resolvedDestination.resolved || destination.trim();
+  const yellow = await import("./yellow-line.data");
+  const originRaw = origin.trim();
+  const destinationRaw = destination.trim();
+  const originYellow = yellow.matchYellowLineStation(originRaw);
+  const destinationYellow = yellow.matchYellowLineStation(destinationRaw);
+
+  // Use original endpoint strings for station-level Yellow lookup. General
+  // aliases strip words like "bypass", which can turn one platform into
+  // another; the station-specific dataset must take precedence.
+  const resolvedOrigin = resolveLocation(originRaw);
+  const resolvedDestination = resolveLocation(destinationRaw);
+  const oClean = originYellow?.name || resolvedOrigin.resolved || originRaw;
+  const dClean = destinationYellow?.name || resolvedDestination.resolved || destinationRaw;
   if (!oClean || !dClean || oClean.toLowerCase() === dClean.toLowerCase()) return [];
 
   const options: MultimodalJourneyOption[] = [];
-  const yellow = await import("./yellow-line.data");
-  const originYellow = yellow.matchYellowLineStation(oClean);
-  const destinationYellow = yellow.matchYellowLineStation(dClean);
 
-  // Always surface a known Yellow-Line corridor path, independently of GTFS.
-  if (
-    originYellow && destinationYellow &&
-    (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")
-  ) {
+  // Yellow Line station geometry/frequency is independent from the GTFS feed.
+  if (originYellow && destinationYellow &&
+      (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
     const details = yellow.getYellowLineTripDetails(originYellow.name, destinationYellow.name);
     if (details) {
       const service = yellow.getYellowLineServiceInfo(travelDate, departureTime);
@@ -334,27 +338,24 @@ export async function planMultimodalJourneys(
     }
   }
 
-  // Search active, real GTFS trips for any endpoints represented in the feed.
-  let feedOrigin: string | undefined;
-  let feedDestination: string | undefined;
+  // Search actual scheduled departures for endpoints that also exist in GTFS.
   try {
     const { resolvePlannerStop, findDirectJourneys } = await import("../gtfs/planner");
-    const [from, to] = await Promise.all([
+    const [fromMatch, toMatch] = await Promise.all([
       resolvePlannerStop(oClean),
       resolvePlannerStop(dClean),
     ]);
-    feedOrigin = from.name;
-    feedDestination = to.name;
-    if (feedOrigin && feedDestination) {
-      const trips = await findDirectJourneys(feedOrigin, feedDestination, travelDate, departureTime);
+    if (fromMatch.name && toMatch.name) {
+      const trips = await findDirectJourneys(fromMatch.name, toMatch.name, travelDate, departureTime);
       for (const trip of trips) {
         const mode: TransportMode =
           trip.transportType === "Chennai Metro" ? "metro" :
           trip.transportType === "MTC Bus" ? "bus" :
           trip.transportType === "Suburban Train" ? "train" : "walk";
         if (mode === "walk" || (modeConstraint && modeConstraint !== "none" && mode !== modeConstraint)) continue;
-        const fromName = trip.origin || feedOrigin;
-        const toName = trip.destination || feedDestination;
+
+        const from = trip.origin || fromMatch.name;
+        const to = trip.destination || toMatch.name;
         const line = trip.lineName || trip.routeName || trip.transportType;
         const routeNumber = trip.routeNumber || undefined;
         let fare = 0;
@@ -362,10 +363,10 @@ export async function planMultimodalJourneys(
         let digitalFare: number | undefined;
         try {
           const fareData = mode === "metro"
-            ? calculateMetroFare(fromName, toName, trip.totalStops)
+            ? calculateMetroFare(from, to, trip.totalStops)
             : mode === "bus"
-              ? calculateBusFare(fromName, toName, routeNumber, trip.totalStops)
-              : calculateTrainFare(fromName, toName, trip.totalStops);
+              ? calculateBusFare(from, to, routeNumber, trip.totalStops)
+              : calculateTrainFare(from, to, trip.totalStops);
           if (fareData.isAvailable && !fareData.fareUnavailable && fareData.standardFare && fareData.standardFare > 0) {
             standardFare = fareData.standardFare;
             fare = standardFare;
@@ -384,11 +385,11 @@ export async function planMultimodalJourneys(
           routeNumber,
           operator: mode === "metro" ? "Chennai Metro (CMRL)" :
             mode === "bus" ? "Metropolitan Transport Corporation (MTC)" : "Southern Railway",
-          fromStation: fromName,
-          toStation: toName,
-          boardStation: fromName,
-          alightStation: toName,
-          serviceDirection: trip.serviceDirection || trip.tripHeadsign || toName,
+          fromStation: from,
+          toStation: to,
+          boardStation: from,
+          alightStation: to,
+          serviceDirection: trip.serviceDirection || trip.tripHeadsign || to,
           headsign: trip.tripHeadsign || undefined,
           departureTime: trip.departure,
           arrivalTime: trip.arrival,
@@ -405,18 +406,18 @@ export async function planMultimodalJourneys(
           ...(standardFare !== null ? { standardFare, fareRupees: standardFare } : {}),
           ...(digitalFare !== undefined ? { digitalFare } : {}),
           color: colour,
-          instruction: "Board at " + fromName + " and alight at " + toName + ".",
+          instruction: "Board at " + from + " and alight at " + to + ".",
         };
         options.push({
           id: "gtfs-" + trip.tripId,
-          title: line + " (" + fromName + " → " + toName + ")",
+          title: line + " (" + from + " → " + to + ")",
           description: trip.routeName || trip.transportType + " trip in the loaded GTFS data.",
           durationMinutes: trip.durationMinutes,
           fare,
           ...(standardFare !== null ? { standardFare } : {}),
           ...(digitalFare !== undefined ? { digitalFare } : {}),
-          originStation: fromName,
-          destinationStation: toName,
+          originStation: from,
+          destinationStation: to,
           transferCount: 0,
           walkingDistanceMeters: 0,
           totalStops: trip.totalStops,
