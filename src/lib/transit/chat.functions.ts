@@ -29,14 +29,31 @@ export const sendChat = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const context = data.context as Context;
-    const detectedDate = extractTravelDate(data.message);
-    const departureAfter = extractDepartureTime(data.message);
+    // Resolve "today"/"tomorrow" and default departure filtering in Chennai local time.
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(now);
+    const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+    const chennaiDate = part("year") + "-" + part("month") + "-" + part("day");
+    const chennaiMidday = new Date(chennaiDate + "T12:00:00.000Z");
+    const chennaiClockParts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }).formatToParts(now);
+    const clockPart = (type: string) => chennaiClockParts.find((item) => item.type === type)?.value || "00";
+    const chennaiTime = clockPart("hour") + ":" + clockPart("minute") + ":" + clockPart("second");
+    const detectedDate = extractTravelDate(data.message, chennaiMidday);
+    const requestedTime = extractDepartureTime(data.message);
     const { preferredMode, modeConstraint } = extractModePreferences(data.message);
 
     const activeContext: Context = {
       ...context,
-      travelDate: detectedDate || context.travelDate,
+      // Use today's Chennai service calendar by default, rather than all trips in the feed.
+      travelDate: detectedDate || context.travelDate || chennaiDate,
     };
+    const departureAfter =
+      requestedTime || (activeContext.travelDate === chennaiDate ? chennaiTime : undefined);
 
     const localReply = respond(data.message, activeContext);
 
@@ -49,6 +66,13 @@ export const sendChat = createServerFn({ method: "POST" })
     let gtfsJourneys: Array<{
       routeId: string;
       routeName: string;
+      routeNumber?: string;
+      lineName?: string;
+      serviceDirection?: string;
+      tripHeadsign?: string;
+      transportType?: string;
+      origin?: string;
+      destination?: string;
       tripId: string;
       departure: string;
       arrival: string;
@@ -67,18 +91,6 @@ export const sendChat = createServerFn({ method: "POST" })
       try {
         const { findDirectJourneys } = await import("../gtfs/planner");
         gtfsJourneys = await findDirectJourneys(origin, destination, travelDate, departureAfter);
-        if (gtfsJourneys.length === 0 && travelDate) {
-          // If specific date schedule is inactive, look for unconstrained general schedule
-          const unconstrained = await findDirectJourneys(
-            origin,
-            destination,
-            undefined,
-            departureAfter,
-          );
-          if (unconstrained.length > 0) {
-            gtfsJourneys = unconstrained;
-          }
-        }
       } catch (error) {
         console.warn("GTFS planner lookup error:", error);
       }
@@ -103,38 +115,64 @@ export const sendChat = createServerFn({ method: "POST" })
 
     if (gtfsJourneys.length > 0 || multimodalOptions.length > 0) {
       const firstJourney = gtfsJourneys[0];
-      const scheduleInfo: JourneySchedule = {
-        departures: gtfsJourneys.map((j) => j.departure),
-        durationMinutes:
-          firstJourney?.durationMinutes || multimodalOptions[0]?.durationMinutes || 15,
-        serviceDate: travelDate || undefined,
-        source: "Static GTFS schedule",
-      };
+      const scheduleInfo: JourneySchedule | undefined = gtfsJourneys.length > 0
+        ? {
+            departures: gtfsJourneys.map((journey) => journey.departure),
+            durationMinutes: firstJourney!.durationMinutes,
+            serviceDate: travelDate,
+            source: "Static GTFS schedule",
+          }
+        : undefined;
 
-      // Enrich journey card if exists
-      localReply.cards = localReply.cards.map((card) => {
-        if (card.kind === "journey") {
-          return {
-            ...card,
-            journey: {
-              ...card.journey,
-              schedule: scheduleInfo,
-              multimodalOptions: multimodalOptions.length > 0 ? multimodalOptions : undefined,
-            },
-          };
-        }
-        return card;
-      });
-
-      // Update baseline response text with grounded GTFS schedule details
-      const departures = gtfsJourneys
-        .slice(0, 3)
-        .map((j) => j.departure)
-        .join(", ");
-      const scheduleNote = `\n\nScheduled GTFS departures${travelDate ? ` for ${travelDate}` : ""}: ${departures || "every 6-8 mins"} (~${scheduleInfo.durationMinutes} mins duration, ${cardStops(localReply.cards)} stops).\n(Note: Schedules are static GTFS data, not live vehicle tracking.)`;
-      if (!localReply.reply.includes("Scheduled GTFS departures")) {
-        localReply.reply += scheduleNote;
+      const journeyCardIndex = localReply.cards.findIndex((card) => card.kind === "journey");
+      if (journeyCardIndex >= 0) {
+        localReply.cards = localReply.cards.map((card) =>
+          card.kind === "journey"
+            ? {
+                ...card,
+                journey: {
+                  ...card.journey,
+                  schedule: scheduleInfo,
+                  multimodalOptions: multimodalOptions.length > 0 ? multimodalOptions : undefined,
+                },
+              }
+            : card,
+        );
+      } else if (multimodalOptions.length > 0 && origin && destination) {
+        const firstOption = multimodalOptions[0]!;
+        const newJourneyCard: Card = {
+          kind: "journey",
+          journey: {
+            origin: firstOption.originStation || origin,
+            destination: firstOption.destinationStation || destination,
+            mode: firstOption.modes.join(" + "),
+            legs: [],
+            totalStops: firstOption.totalStops,
+            schedule: scheduleInfo,
+            multimodalOptions,
+          },
+        };
+        localReply.cards.push(newJourneyCard);
       }
+
+      if (gtfsJourneys.length > 0) {
+        const departures = gtfsJourneys.slice(0, 3).map((journey) => journey.departure).join(", ");
+        localReply.reply +=
+          "\n\nScheduled departures for " + travelDate + ": " + departures +
+          ". These are static GTFS timetable times, not live vehicle tracking.";
+      } else if (multimodalOptions.some((option) => option.scheduleSource === "Timetable unavailable")) {
+        localReply.reply +=
+          "\n\nThe Yellow Line station route is shown. The currently loaded timetable does not contain verified scheduled departures or an exact fare for this route.";
+      }
+    }
+
+    // Do not let a generative response rewrite factual transport results,
+    // grievance drafts, fares or timetable data.
+    if (
+      (origin && destination) ||
+      localReply.cards.some((card) => card.kind === "journey" || card.kind === "fare" || card.kind === "grievance")
+    ) {
+      return localReply;
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -233,11 +271,6 @@ RESPONSE STYLE:
       };
     }
   });
-
-function cardStops(cards: Card[]): number {
-  const j = cards.find((c) => c.kind === "journey");
-  return j && j.kind === "journey" ? j.journey.totalStops : 4;
-}
 
 export const getMultimodalJourneys = createServerFn({ method: "POST" })
   .validator((d: unknown) =>
