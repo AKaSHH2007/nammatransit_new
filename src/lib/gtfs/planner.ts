@@ -153,6 +153,68 @@ async function getPlannerIndex() {
   return plannerPromise;
 }
 
+function levenshtein(a: string, b: string): number {
+  const row = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    let previous = row[0]!;
+    row[0] = i;
+    for (let j = 1; j <= b.length; j++) {
+      const current = row[j]!;
+      row[j] = Math.min(row[j]! + 1, row[j - 1]! + 1, previous + (a[i - 1] === b[j - 1] ? 0 : 1));
+      previous = current;
+    }
+  }
+  return row[b.length]!;
+}
+
+/**
+ * Resolve free-text input against every stop in the loaded GTFS feed.
+ * The return value is a canonical stop name; it does not select a trip or
+ * infer a route. Multiple equally good names are returned for clarification.
+ */
+export async function resolvePlannerStop(query: string): Promise<{
+  name?: string;
+  candidates: string[];
+  confidence: number;
+}> {
+  const index = await getPlannerIndex();
+  const search = normalize(query);
+  if (!search) return { candidates: [], confidence: 0 };
+
+  const names = [...new Set([...index.stops.values()]
+    .map((stop) => (stop.stop_name || "").trim())
+    .filter(Boolean))];
+
+  const exact = names.filter((name) => normalize(name) === search);
+  if (exact.length === 1) return { name: exact[0], candidates: exact, confidence: 1 };
+
+  const prefix = names.filter((name) => normalize(name).startsWith(search) || search.startsWith(normalize(name)));
+  if (prefix.length === 1) return { name: prefix[0], candidates: prefix, confidence: 0.95 };
+  if (prefix.length > 1) return { candidates: prefix.slice(0, 5), confidence: 0.8 };
+
+  const ranked = names
+    .map((name) => {
+      const normalizedName = normalize(name);
+      const distance = levenshtein(search, normalizedName);
+      const maxLength = Math.max(search.length, normalizedName.length);
+      return { name, distance, ratio: maxLength ? (maxLength - distance) / maxLength : 0 };
+    })
+    .filter((item) => item.distance <= (search.length <= 7 ? 1 : 2) && item.ratio >= 0.78)
+    .sort((a, b) => b.ratio - a.ratio || a.distance - b.distance);
+
+  if (!ranked.length) return { candidates: [], confidence: 0 };
+  const best = ranked[0]!;
+  const next = ranked[1];
+  if (next && best.ratio - next.ratio < 0.12) {
+    return {
+      candidates: [...new Set(ranked.filter((item) => best.ratio - item.ratio < 0.12).map((item) => item.name))].slice(0, 5),
+      confidence: best.ratio,
+    };
+  }
+
+  return { name: best.name, candidates: [best.name], confidence: best.ratio };
+}
+
 export async function searchPlannerStops(query: string) {
   const index = await getPlannerIndex();
   const search = normalize(query);
