@@ -539,7 +539,7 @@ export async function planMultimodalJourneys(
   // metro graph can still provide a station-to-station route. It is topology
   // only: do not infer fares or departure times from this demo route graph.
   if (options.length === 0 && (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
-    const metroPlan = planJourney(oClean, dClean);
+    const metroPlan = planJourney(originRaw, destinationRaw);
     if (metroPlan && metroPlan.legs.length > 0) {
       const planLegs: JourneyLeg[] = metroPlan.legs.map((leg) => ({
         id: "metro-graph-" + leg.lineId + "-" + leg.from,
