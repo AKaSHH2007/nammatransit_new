@@ -137,6 +137,28 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
         </div>
       </div>
 
+      {option.legs.some((leg) => leg.serviceFrequency) && (
+        <div className="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+              Yellow Line published service frequency
+            </span>
+            <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+              Operating window: {option.legs.find((leg) => leg.serviceWindow)?.serviceWindow}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-foreground">
+            {option.legs.find((leg) => leg.serviceFrequency)?.serviceFrequency}
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {option.legs.find((leg) => leg.serviceNotice)?.serviceNotice}
+          </p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Frequency guidance is not a fixed departure list for every station. Exact trip times are not included in the loaded Yellow Line timetable.
+          </p>
+        </div>
+      )}
+
       {/* Vertical Step-by-Step Timeline with Explicit Boarding & Alighting */}
       <div className="relative space-y-7 pl-1">
         {option.legs.map((leg, legIdx) => {
