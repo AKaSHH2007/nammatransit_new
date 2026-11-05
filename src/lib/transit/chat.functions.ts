@@ -230,7 +230,7 @@ export const sendChat = createServerFn({ method: "POST" })
       card.kind === "facility" || card.kind === "alerts",
     );
     const currentTurnIsTransitFollowUp =
-      /\\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|departure|depart|arrival|timetable|schedule|transfer|platform|station|how long|how much|reach)\\b/i.test(data.message);
+      /\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|departure|depart|arrival|timetable|schedule|transfer|platform|station|how long|how much|reach)\b/i.test(data.message);
 
     // Do not suppress Gemini for unrelated questions merely because this
     // conversation previously planned a journey.
