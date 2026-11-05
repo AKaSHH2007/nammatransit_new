@@ -11,6 +11,8 @@ import {
   YELLOW_LINE_STATIONS,
   YELLOW_LINE_INTERSTATION_MINUTES,
   getYellowLineServiceInfo,
+  matchYellowLineStation,
+  getYellowLineTripDetails,
 } from "./yellow-line.data";
 import type {
   JourneyHighlight,
@@ -269,96 +271,50 @@ function createYellowLineStationPath(
   travelDate?: string,
   departureTime?: string,
 ): MultimodalJourneyOption | null {
-  // This helper uses the station supplement, not generic place aliases.
-  // It must never create exact departure timestamps or ticket fares.
-  const yellowStations = [
-    "Poonamallee Bypass",
-    "Poonamallee Bus Stand",
-    "Poonamallee Government Hospital",
-    "Karayanchavadi",
-    "Kumananchavadi",
-    "Kattupakkam",
-    "Iyappanthangal",
-    "Thelliyaragaram",
-    "Porur Bypass",
-    "Porur Junction",
-    "Vadapalani",
-  ];
-  const normalize = (value: string) =>
-    value.toLowerCase().replace(/[^a-z0-9]/g, "");
-  const aliases: Record<string, string> = {
-    poonamali: "Poonamallee Bypass",
-    poonamallee: "Poonamallee Bypass",
-    punamallee: "Poonamallee Bypass",
-    punamali: "Poonamallee Bypass",
-    poonamalleebypass: "Poonamallee Bypass",
-    poonamaliibypass: "Poonamallee Bypass",
-    poonamalleebusstand: "Poonamallee Bus Stand",
-    vadapalani: "Vadapalani",
-    vadapalany: "Vadapalani",
-    vadaipalani: "Vadapalani",
-    porurjunction: "Porur Junction",
-    kattupakkam: "Kattupakkam",
-    iyappanthangal: "Iyappanthangal",
-  };
-  const match = (value: string): string | undefined => {
-    const key = normalize(value);
-    if (aliases[key]) return aliases[key];
-    return yellowStations.find((station) => normalize(station) === key);
-  };
-  const from = match(fromName);
-  const to = match(toName);
-  if (!from || !to || from === to) return null;
-  const fromIndex = yellowStations.indexOf(from);
-  const toIndex = yellowStations.indexOf(to);
-  const forward = fromIndex < toIndex;
-  const names = forward
-    ? yellowStations.slice(fromIndex, toIndex + 1)
-    : yellowStations.slice(toIndex, fromIndex + 1).reverse();
-  const hops = names.length - 1;
-  if (hops <= 0) return null;
+  const from = matchYellowLineStation(fromName);
+  const to = matchYellowLineStation(toName);
+  if (!from || !to) return null;
+  const details = getYellowLineTripDetails(from.name, to.name);
+  if (!details) return null;
+
   const service = getYellowLineServiceInfo(travelDate, departureTime);
-  const stops = names.map((name) => {
-    const station = YELLOW_LINE_STATIONS.find((item) => item.name === name);
-    return {
-      name,
-      latitude: station?.latitude,
-      longitude: station?.longitude,
-    };
-  });
   const leg: JourneyLeg = {
     id: "yellow-line-station-sequence",
     mode: "metro",
     lineName: "Chennai Metro Yellow Line",
     routeNumber: "Yellow Line (Corridor 4)",
     operator: "Chennai Metro Rail Limited",
-    fromStation: from,
-    toStation: to,
-    boardStation: from,
-    alightStation: to,
-    serviceDirection: forward ? "Towards Vadapalani" : "Towards Poonamallee Bypass",
-    durationMinutes: Math.round(hops * YELLOW_LINE_INTERSTATION_MINUTES),
-    stopsCount: hops,
-    intermediateStops: stops,
+    fromStation: details.from.name,
+    toStation: details.to.name,
+    boardStation: details.from.name,
+    alightStation: details.to.name,
+    serviceDirection: details.direction,
+    durationMinutes: details.durationMinutes,
+    stopsCount: details.hopCount,
+    intermediateStops: details.stops.map((station) => ({
+      name: station.name,
+      latitude: station.latitude,
+      longitude: station.longitude,
+    })),
     color: "#EAB308",
-    instruction: "Board at " + from + " and alight at " + to +
-      ". Exact train departure timestamps and fare are not present in this dataset.",
+    instruction: "Board at " + details.from.name + " and alight at " + details.to.name +
+      ". Exact train departure timestamps and fare are unavailable in this dataset.",
     serviceWindow: service.operatingWindow,
     serviceFrequency: service.frequencyText,
     serviceNotice: service.notice,
   };
   return {
-    id: "yellow-line-" + fromIndex + "-" + toIndex,
-    title: "Chennai Metro Yellow Line (" + from + " → " + to + ")",
-    description: "Station path from the Yellow Line supplement. Approximate in-vehicle time; exact departures and fares are unavailable. " + service.frequencyText,
-    durationMinutes: leg.durationMinutes,
+    id: "yellow-line-" + details.from.code + "-" + details.to.code,
+    title: "Chennai Metro Yellow Line (" + details.from.name + " → " + details.to.name + ")",
+    description: "Verified Yellow Line station sequence. Exact clock times and fare are unavailable in this source. " + service.frequencyText,
+    durationMinutes: details.durationMinutes,
     fare: 0,
     standardFare: null,
-    originStation: from,
-    destinationStation: to,
+    originStation: details.from.name,
+    destinationStation: details.to.name,
     transferCount: 0,
     walkingDistanceMeters: 0,
-    totalStops: hops,
+    totalStops: details.hopCount,
     departureTime: "",
     arrivalTime: "",
     modes: ["metro"],
@@ -378,15 +334,10 @@ export async function planMultimodalJourneys(
   preferredMode?: ModePreference,
   modeConstraint?: ModeConstraint,
 ): Promise<MultimodalJourneyOption[]> {
-  const yellow = await import("./yellow-line.data");
   const originRaw = origin.trim();
   const destinationRaw = destination.trim();
-  const originYellow = yellow.matchYellowLineStation(originRaw);
-  const destinationYellow = yellow.matchYellowLineStation(destinationRaw);
-
-  // Use original endpoint strings for station-level Yellow lookup. General
-  // aliases strip words like "bypass", which can turn one platform into
-  // another; the station-specific dataset must take precedence.
+  const originYellow = matchYellowLineStation(originRaw);
+  const destinationYellow = matchYellowLineStation(destinationRaw);
   const resolvedOrigin = resolveLocation(originRaw);
   const resolvedDestination = resolveLocation(destinationRaw);
   const oClean = originYellow?.name || resolvedOrigin.resolved || originRaw;
@@ -394,11 +345,11 @@ export async function planMultimodalJourneys(
   if (!oClean || !dClean || oClean.toLowerCase() === dClean.toLowerCase()) return [];
 
   const options: MultimodalJourneyOption[] = [];
-
   if (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro") {
     const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
     if (yellowPath) options.push(yellowPath);
   }
+
 
   // Search actual scheduled departures for endpoints that also exist in GTFS.
   try {
