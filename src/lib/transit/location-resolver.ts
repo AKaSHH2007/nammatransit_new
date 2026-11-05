@@ -540,6 +540,50 @@ export function extractAndResolveLocations(text: string): {
   destination?: ResolutionResult;
   disambiguationPrompt?: string;
 } {
+  const input = (text || "").trim();
+  if (!input) return {};
+
+  const cleanEndpoint = (value: string) =>
+    value
+      .replace(/\s+(?:on|via|using|by)\s+(?:the\s+)?(?:(?:blue|green|yellow)\s+line|metro|bus|train|suburban(?:\s+rail(?:way)?)?)\b.*$/i, "")
+      .replace(/^[\s,;:]+|[\s,;:.!?]+$/g, "")
+      .trim();
+
+  const resolvePair = (rawOrigin: string, rawDestination: string) => {
+    const origin = resolveLocation(cleanEndpoint(rawOrigin));
+    const destination = resolveLocation(cleanEndpoint(rawDestination));
+    let disambiguationPrompt: string | undefined;
+
+    if (origin.isAmbiguous && origin.ambiguousCandidates?.length) {
+      disambiguationPrompt = "For your starting point \"" + origin.input + "\", did you mean " + origin.ambiguousCandidates.join(" or ") + "?";
+    } else if (destination.isAmbiguous && destination.ambiguousCandidates?.length) {
+      disambiguationPrompt = "For your destination \"" + destination.input + "\", did you mean " + destination.ambiguousCandidates.join(" or ") + "?";
+    }
+
+    return { origin, destination, disambiguationPrompt };
+  };
+
+  // "from Guindy to Airport", "Show route from Poonamali to Vadapalani",
+  // "Poonamali to Vadapalani", and "between Guindy and Airport".
+  const fromTo = input.match(
+    /\b(?:from|starting\s+from|start(?:ing)?\s+at|board\s+at|leave\s+from)\s+(.+?)\s+(?:to|towards|reach|till|heading\s+to)\s+(.+?)\s*$/i,
+  );
+  if (fromTo?.[1] && fromTo[2]) return resolvePair(fromTo[1], fromTo[2]);
+
+  const between = input.match(/\bbetween\s+(.+?)\s+and\s+(.+?)\s*$/i);
+  if (between?.[1] && between[2]) return resolvePair(between[1], between[2]);
+
+  const barePair = input.match(/^\s*(.+?)\s+(?:to|towards)\s+(.+?)\s*$/i);
+  if (barePair?.[1] && barePair[2]) return resolvePair(barePair[1], barePair[2]);
+
+  const toMatch = input.match(/\b(?:to|reach|towards|till|going\s+to|heading\s+to)\s+(.+?)\s*$/i);
+  if (toMatch?.[1]) return { destination: resolveLocation(cleanEndpoint(toMatch[1])) };
+
+  const fromMatch = input.match(/\b(?:from|starting\s+at|start\s+from|board\s+at)\s+(.+?)\s*$/i);
+  if (fromMatch?.[1]) return { origin: resolveLocation(cleanEndpoint(fromMatch[1])) };
+
+  return {};
+} {
   const normText = cleanTransitInput(text);
 
   // Match patterns like "from X to Y", "start from X reach Y", "between X and Y"
