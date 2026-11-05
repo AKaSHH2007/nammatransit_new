@@ -263,7 +263,7 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
   const hasResolvedLocation = Boolean(extracted.origin?.resolved || extracted.destination?.resolved);
   const isJourneyIntent =
     /\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|go|reach|how do i|show route)\b/i.test(message) &&
-    hasResolvedLocation;
+    Boolean(extracted.origin?.resolved && extracted.destination?.resolved);
 
   // A new journey request interrupts complaint collection.
   if (ctx.grievance && /\bcancel\b/i.test(message)) {

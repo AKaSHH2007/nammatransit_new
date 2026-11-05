@@ -344,8 +344,26 @@ function resolveLocationRaw(rawInput: string): ResolutionResult {
     }
   }
 
-  const clean = cleanTransitInput(input);
   const rawLower = input.toLowerCase().trim();
+
+  // Match complete place names before removing generic suffixes. This keeps
+  // Poonamallee Bypass distinct from Poonamallee Bus Stand.
+  const fullNameKey = rawLower.replace(/[’']/g, "").replace(/\s+/g, " ").trim();
+  if (COMMON_ALIASES[fullNameKey]) {
+    const canonical = COMMON_ALIASES[fullNameKey]!;
+    return {
+      input,
+      resolved: canonical,
+      canonicalName: canonical,
+      confidence: 1,
+      isCorrected: canonical.toLowerCase() !== fullNameKey,
+      correctionMessage: canonical.toLowerCase() !== fullNameKey
+        ? `I understood your location as ${canonical}.`
+        : undefined,
+    };
+  }
+
+  const clean = cleanTransitInput(input);
 
   // 2. Check exact alias dictionary match
   if (COMMON_ALIASES[rawLower]) {
