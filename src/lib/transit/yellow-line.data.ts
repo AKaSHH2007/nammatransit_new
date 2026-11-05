@@ -7,8 +7,10 @@
  * - Operational Passenger Section: Poonamallee Bypass ↔ Vadapalani (11 Stations)
  * - Service Commencement: 11 October 2026
  * - Official Source: CMRL Press Releases (https://chennaimetrorail.org/press-release/)
- * - Data Type: Static scheduled timetable and verified stop network.
- *              Live train tracking is NOT available for this new corridor.
+ * - Service-window reference: CMRL Time Table (https://chennaimetrorail.org/time-table/)
+ * - Data Type: Station geometry and published headway/frequency guidance only.
+ *              This supplement is NOT a per-trip station timetable.
+ *              Live train tracking is NOT available in this application.
  *
  * OPERATING SCHEDULE & FREQUENCY:
  * - Operating Hours: 06:00 to 21:00 (Daily)
@@ -44,8 +46,10 @@ export const YELLOW_LINE_METADATA = {
   operatingHours: "06:00–21:00",
   serviceStartDate: "2026-10-11",
   sourceUrl: "https://chennaimetrorail.org/press-release/",
+  timetableUrl: "https://chennaimetrorail.org/time-table/",
+  serviceNoticeDate: "2026-10-21",
   provenance:
-    "Official CMRL Announcements & Phase 2 Corridor 4 Timetable (Effective 11 October 2026). Static scheduled timetable; live GPS tracking not currently active.",
+    "CMRL Phase 2 Corridor 4 station route and published service-frequency guidance. The bundled supplement does not contain an exact station-by-station train departure list; live GPS tracking is not connected.",
   isLiveTracking: false as const,
 };
 
