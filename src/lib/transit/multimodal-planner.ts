@@ -274,156 +274,157 @@ export async function planMultimodalJourneys(
   if (!oClean || !dClean || oClean.toLowerCase() === dClean.toLowerCase()) return [];
 
   const options: MultimodalJourneyOption[] = [];
+  const yellowModule = await import("./yellow-line.data");
+  const originOnYellow = Boolean(yellowModule.matchYellowLineStation(oClean));
+  const destinationOnYellow = Boolean(yellowModule.matchYellowLineStation(dClean));
 
-  // Confirm both endpoints against the complete stop list or the Yellow Line
-  // supplement; a hand-maintained canonical list must not exclude GTFS stops.
-  let originInFeed = false;
-  let destinationInFeed = false;
+  // Resolve each side independently. A supplementary Yellow Line stop is valid
+  // even when it is not yet represented in the static GTFS feed.
+  let feedOrigin: string | undefined;
+  let feedDestination: string | undefined;
   try {
     const { resolvePlannerStop } = await import("../gtfs/planner");
     const [originMatch, destinationMatch] = await Promise.all([
       resolvePlannerStop(oClean),
       resolvePlannerStop(dClean),
     ]);
-    originInFeed = Boolean(originMatch.name);
-    destinationInFeed = Boolean(destinationMatch.name);
+    feedOrigin = originMatch.name;
+    feedDestination = destinationMatch.name;
   } catch (error) {
     console.warn("GTFS stop index validation failed:", error);
   }
-  const yellowModule = await import("./yellow-line.data");
-  const originOnYellow = Boolean(yellowModule.matchYellowLineStation(oClean));
-  const destinationOnYellow = Boolean(yellowModule.matchYellowLineStation(dClean));
-  if ((!originInFeed && !originOnYellow) || (!destinationInFeed && !destinationOnYellow)) {
-    return [];
-  }
 
-  // Only return bus, Metro and suburban journeys that are present in an actual
-  // active GTFS trip. Do not construct bus route numbers, stops, fares or times.
-  try {
-    const { findDirectJourneys } = await import("../gtfs/planner");
-    const directTrips = await findDirectJourneys(oClean, dClean, travelDate, departureTime);
+  if (!feedOrigin && !originOnYellow) return [];
+  if (!feedDestination && !destinationOnYellow) return [];
 
-    for (const trip of directTrips) {
-      const mode: TransportMode =
-        trip.transportType === "Chennai Metro" ? "metro" :
-        trip.transportType === "MTC Bus" ? "bus" :
-        trip.transportType === "Suburban Train" ? "train" : "walk";
-
-      if (mode === "walk") continue;
-      if (modeConstraint && modeConstraint !== "none" && mode !== modeConstraint) continue;
-
-      const boardStation = trip.origin || oClean;
-      const alightStation = trip.destination || dClean;
-      const lineName = trip.lineName || trip.routeName || trip.transportType;
-      const routeNumber = trip.routeNumber || undefined;
-      let fare = 0;
-      let standardFare: number | null = null;
-      let digitalFare: number | undefined;
-
-      // Use the existing operator fare calculation only when it returns a
-      // positive amount. A zero is treated as unavailable, never as free travel.
-      try {
-        const fareDetail =
-          mode === "metro"
-            ? calculateMetroFare(boardStation, alightStation, trip.totalStops)
-            : mode === "bus"
-              ? calculateBusFare(boardStation, alightStation, routeNumber, trip.totalStops)
-              : calculateTrainFare(boardStation, alightStation, trip.totalStops);
-        if (fareDetail.isAvailable && !fareDetail.fareUnavailable &&
-            fareDetail.standardFare !== null && fareDetail.standardFare > 0) {
-          standardFare = fareDetail.standardFare;
-          fare = fareDetail.standardFare;
-          if (fareDetail.digitalFare !== null && fareDetail.digitalFare !== undefined &&
-              fareDetail.digitalFare > 0) {
-            digitalFare = fareDetail.digitalFare;
-          }
-        }
-      } catch (error) {
-        console.warn("Fare lookup unavailable for GTFS trip:", error);
-      }
-
-      const color =
-        mode === "metro"
-          ? lineName.toLowerCase().includes("yellow") ? "#EAB308" :
-            lineName.toLowerCase().includes("green") ? "#16A34A" : "#2563EB"
-          : mode === "bus" ? "#FFAA47" : "#A78BFA";
-
-      const stops: JourneyStop[] = trip.stops.map((stop) => ({
-        name: stop.name,
-        stopId: stop.stopId,
-        arrival: stop.arrival,
-        departure: stop.departure,
-        latitude: stop.latitude ?? getStationCoordinates(stop.name)?.lat,
-        longitude: stop.longitude ?? getStationCoordinates(stop.name)?.lon,
-      }));
-
-      const routeLabel = mode === "metro" ? lineName :
-        mode === "bus" ? "MTC " + (routeNumber || "Bus") : "Southern Railway Suburban";
-      const leg: JourneyLeg = {
-        id: "gtfs-" + trip.tripId,
-        mode,
-        lineName: routeLabel,
-        routeNumber,
-        operator: trip.transportType === "Chennai Metro" ? "Chennai Metro (CMRL)" :
-          trip.transportType === "MTC Bus" ? "Metropolitan Transport Corporation (MTC)" :
-          "Southern Railway",
-        fromStation: boardStation,
-        toStation: alightStation,
-        boardStation,
-        alightStation,
-        serviceDirection: trip.serviceDirection || trip.tripHeadsign || alightStation,
-        headsign: trip.tripHeadsign || undefined,
-        departureTime: trip.departure,
-        arrivalTime: trip.arrival,
-        durationMinutes: trip.durationMinutes,
-        stopsCount: trip.totalStops,
-        intermediateStops: stops,
-        ...(standardFare !== null ? { standardFare, fareRupees: standardFare } : {}),
-        ...(digitalFare !== undefined ? { digitalFare } : {}),
-        color,
-        instruction: "Board at " + boardStation + " and alight at " + alightStation +
-          (trip.serviceDirection ? ". Service direction: " + trip.serviceDirection + "." : "."),
-      };
-
-      options.push({
-        id: "gtfs-" + trip.tripId,
-        title: routeLabel + " (" + boardStation + " → " + alightStation + ")",
-        description: trip.routeName || (trip.transportType + " service from the supplied GTFS feed."),
-        durationMinutes: trip.durationMinutes,
-        fare,
-        ...(standardFare !== null ? { standardFare } : {}),
-        ...(digitalFare !== undefined ? { digitalFare } : {}),
-        originStation: boardStation,
-        destinationStation: alightStation,
-        transferCount: 0,
-        walkingDistanceMeters: 0,
-        totalStops: trip.totalStops,
-        departureTime: trip.departure,
-        arrivalTime: trip.arrival,
-        modes: [mode],
-        legs: [leg],
-        highlights: [],
-        fareBreakdown: standardFare !== null
-          ? [{ mode, label: routeLabel + " fare", amount: standardFare }]
-          : [],
-        scheduleSource: "Static GTFS schedule",
-        isLiveTracking: false,
-      });
-    }
-  } catch (error) {
-    console.warn("GTFS direct journey lookup failed:", error);
-  }
-
-  // Yellow Line station geometry is supplied separately from the currently
-  // loaded GTFS trip timetable. Show its verified station sequence on the map,
-  // but deliberately do not invent a departure time, arrival time or fare.
-  if ((!options.some((option) => option.modes.includes("metro")) || originOnYellow || destinationOnYellow) &&
-      (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
+  // Use actual, active GTFS trips for Bus, Blue/Green Metro and Suburban EMU.
+  // The direct lookup uses canonical stop names so spelling aliases never
+  // turn into partial substring matches on unrelated locations.
+  if (feedOrigin && feedDestination) {
     try {
-      const { getYellowLineTripDetails, getYellowLineServiceInfo } = await import("./yellow-line.data");
+      const { findDirectJourneys } = await import("../gtfs/planner");
+      const directTrips = await findDirectJourneys(feedOrigin, feedDestination, travelDate, departureTime);
+
+      for (const trip of directTrips) {
+        const mode: TransportMode =
+          trip.transportType === "Chennai Metro" ? "metro" :
+          trip.transportType === "MTC Bus" ? "bus" :
+          trip.transportType === "Suburban Train" ? "train" : "walk";
+
+        if (mode === "walk") continue;
+        if (modeConstraint && modeConstraint !== "none" && mode !== modeConstraint) continue;
+
+        const boardStation = trip.origin || feedOrigin;
+        const alightStation = trip.destination || feedDestination;
+        const lineName = trip.lineName || trip.routeName || trip.transportType;
+        const routeNumber = trip.routeNumber || undefined;
+        let fare = 0;
+        let standardFare: number | null = null;
+        let digitalFare: number | undefined;
+
+        try {
+          const detail =
+            mode === "metro" ? calculateMetroFare(boardStation, alightStation, trip.totalStops) :
+            mode === "bus" ? calculateBusFare(boardStation, alightStation, routeNumber, trip.totalStops) :
+            calculateTrainFare(boardStation, alightStation, trip.totalStops);
+          if (detail.isAvailable && !detail.fareUnavailable && detail.standardFare && detail.standardFare > 0) {
+            standardFare = detail.standardFare;
+            fare = detail.standardFare;
+            if (detail.digitalFare && detail.digitalFare > 0) digitalFare = detail.digitalFare;
+          }
+        } catch (error) {
+          console.warn("Fare lookup unavailable for GTFS trip:", error);
+        }
+
+        const color =
+          mode === "metro"
+            ? lineName.toLowerCase().includes("yellow") ? "#EAB308" :
+              lineName.toLowerCase().includes("green") ? "#16A34A" : "#2563EB"
+            : mode === "bus" ? "#FFAA47" : "#A78BFA";
+
+        const stops: JourneyStop[] = trip.stops.map((stop) => ({
+          name: stop.name,
+          stopId: stop.stopId,
+          arrival: stop.arrival,
+          departure: stop.departure,
+          latitude: stop.latitude ?? getStationCoordinates(stop.name)?.lat,
+          longitude: stop.longitude ?? getStationCoordinates(stop.name)?.lon,
+        }));
+
+        const routeLabel =
+          mode === "metro" ? lineName :
+          mode === "bus" ? "MTC " + (routeNumber || "Bus") :
+          "Southern Railway Suburban";
+        const leg: JourneyLeg = {
+          id: "gtfs-" + trip.tripId,
+          mode,
+          lineName: routeLabel,
+          routeNumber,
+          operator:
+            mode === "metro" ? "Chennai Metro (CMRL)" :
+            mode === "bus" ? "Metropolitan Transport Corporation (MTC)" :
+            "Southern Railway",
+          fromStation: boardStation,
+          toStation: alightStation,
+          boardStation,
+          alightStation,
+          serviceDirection: trip.serviceDirection || trip.tripHeadsign || alightStation,
+          headsign: trip.tripHeadsign || undefined,
+          departureTime: trip.departure,
+          arrivalTime: trip.arrival,
+          durationMinutes: trip.durationMinutes,
+          stopsCount: trip.totalStops,
+          intermediateStops: stops,
+          ...(standardFare !== null ? { standardFare, fareRupees: standardFare } : {}),
+          ...(digitalFare !== undefined ? { digitalFare } : {}),
+          color,
+          instruction: "Board at " + boardStation + " and alight at " + alightStation +
+            (trip.serviceDirection ? ". Service direction: " + trip.serviceDirection + "." : "."),
+        };
+
+        options.push({
+          id: "gtfs-" + trip.tripId,
+          title: routeLabel + " (" + boardStation + " → " + alightStation + ")",
+          description: trip.routeName || (trip.transportType + " service from the loaded GTFS feed."),
+          durationMinutes: trip.durationMinutes,
+          fare,
+          ...(standardFare !== null ? { standardFare } : {}),
+          ...(digitalFare !== undefined ? { digitalFare } : {}),
+          originStation: boardStation,
+          destinationStation: alightStation,
+          transferCount: 0,
+          walkingDistanceMeters: 0,
+          totalStops: trip.totalStops,
+          departureTime: trip.departure,
+          arrivalTime: trip.arrival,
+          modes: [mode],
+          legs: [leg],
+          highlights: [],
+          fareBreakdown: standardFare !== null
+            ? [{ mode, label: routeLabel + " fare", amount: standardFare }]
+            : [],
+          scheduleSource: "Static GTFS schedule",
+          isLiveTracking: false,
+        });
+      }
+    } catch (error) {
+      console.warn("GTFS direct journey lookup failed:", error);
+    }
+  }
+
+  // Yellow Line currently has verified station order/geometry and headway
+  // guidance, but not a complete published trip-level timetable in the app.
+  // Return that exact station path when one or both endpoints are on Corridor 4
+  // and it is a valid single-line journey. Never fabricate clock times/fares.
+  if (
+    originOnYellow && destinationOnYellow &&
+    (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")
+  ) {
+    try {
+      const { getYellowLineTripDetails, getYellowLineServiceInfo } = yellowModule;
       const yellow = getYellowLineTripDetails(oClean, dClean);
       if (yellow) {
-        const serviceInfo = getYellowLineServiceInfo(travelDate, departureTime);
+        const service = getYellowLineServiceInfo(travelDate, departureTime);
         const stops: JourneyStop[] = yellow.stops.map((stop) => ({
           name: stop.name,
           latitude: stop.latitude,
@@ -446,15 +447,15 @@ export async function planMultimodalJourneys(
           color: "#EAB308",
           instruction: "Board the Yellow Line at " + yellow.from.name +
             " and alight at " + yellow.to.name +
-            ". The route sequence is available, but an exact departure timetable and fare are not available in the loaded GTFS/fare data.",
-          serviceWindow: serviceInfo.operatingWindow,
-          serviceFrequency: serviceInfo.frequencyText,
-          serviceNotice: serviceInfo.notice,
+            ". Exact departure times and fares are not available in the loaded trip/fare data.",
+          serviceWindow: service.operatingWindow,
+          serviceFrequency: service.frequencyText,
+          serviceNotice: service.notice,
         };
         options.push({
           id: "yellow-line-route-no-timetable",
           title: "Chennai Metro Yellow Line (" + yellow.from.name + " → " + yellow.to.name + ")",
-          description: "Yellow Line station sequence. Travel time is an estimate; exact scheduled departures and fare are not available in the loaded data. Published service-frequency guidance is shown separately.",
+          description: "Verified Yellow Line station sequence. Travel time is an estimate; exact departure times and fare are not available in the loaded data. " + service.frequencyText,
           durationMinutes: yellow.durationMinutes,
           fare: 0,
           standardFare: null,
@@ -482,18 +483,13 @@ export async function planMultimodalJourneys(
   if (modeConstraint && modeConstraint !== "none") {
     filtered = filtered.filter((option) => option.modes.includes(modeConstraint));
   }
-
   if (preferredMode && preferredMode !== "any") {
-    filtered = [...filtered].sort((a, b) => {
-      const aPreferred = a.modes.includes(preferredMode) ? 0 : 1;
-      const bPreferred = b.modes.includes(preferredMode) ? 0 : 1;
-      return aPreferred - bPreferred;
-    });
+    filtered = [...filtered].sort((a, b) =>
+      Number(!a.modes.includes(preferredMode)) - Number(!b.modes.includes(preferredMode)),
+    );
   }
-
   return calculateJourneyHighlights(filtered, preferredMode);
 }
-
 function filterUniqueCandidates(options: MultimodalJourneyOption[]): MultimodalJourneyOption[] {
   const seen = new Set<string>();
   const unique: MultimodalJourneyOption[] = [];
