@@ -53,7 +53,7 @@ export function MultimodalJourneyResults({
     origin,
     destination,
     travelDate,
-    departureTime: departureTime || "08:30",
+    departureTime: departureTime || "",
   });
 
   const [options, setOptions] = useState<MultimodalJourneyOption[]>(initialOptions || []);
@@ -64,15 +64,24 @@ export function MultimodalJourneyResults({
   const [activeMobileView, setActiveMobileView] = useState<"timeline" | "map">("timeline");
   const [copiedShare, setCopiedShare] = useState(false);
 
-  // Update options if initialOptions prop changes
+  // Always replace options when the selected origin/destination changes.
+  // An empty result must clear the previous route instead of showing stale cards.
   useEffect(() => {
-    if (initialOptions && initialOptions.length > 0) {
-      setOptions(initialOptions);
-      setSelectedOptionId((current) =>
-        !current || !initialOptions.some((o) => o.id === current) ? initialOptions[0]!.id : current,
-      );
-    }
-  }, [initialOptions]);
+    const nextOptions = initialOptions ?? [];
+    setOptions(nextOptions);
+    setSelectedOptionId(nextOptions[0]?.id || "");
+    setActiveFilter("all");
+  }, [initialOptions, origin, destination]);
+
+  useEffect(() => {
+    setParams((previous) => ({
+      ...previous,
+      origin,
+      destination,
+      travelDate,
+      departureTime: departureTime || "",
+    }));
+  }, [origin, destination, travelDate, departureTime]);
 
   const handleSearch = (newParams: JourneySearchParams) => {
     setParams(newParams);
@@ -100,7 +109,7 @@ export function MultimodalJourneyResults({
         list.sort((a, b) => a.durationMinutes - b.durationMinutes);
         break;
       case "cheapest":
-        list.sort((a, b) => a.fare - b.fare);
+        list.sort((a, b) => (a.fare > 0 ? a.fare : Number.POSITIVE_INFINITY) - (b.fare > 0 ? b.fare : Number.POSITIVE_INFINITY));
         break;
       case "fewest_transfers":
         list.sort((a, b) => a.transferCount - b.transferCount);
@@ -149,7 +158,11 @@ export function MultimodalJourneyResults({
 
   const handleShare = async () => {
     if (!selectedOption) return;
-    const shareText = `🚇 NammaTransit AI Journey: ${params.origin} → ${params.destination}\n• Route: ${selectedOption.title}\n• Duration: ~${selectedOption.durationMinutes} mins (Fare: ₹${selectedOption.fare})\n• Departures: ${selectedOption.departureTime.slice(0, 5)} (${selectedOption.totalStops} stops)\n(Static GTFS data)`;
+    const fareText = selectedOption.fare > 0 ? "₹" + selectedOption.fare : "Fare unavailable";
+    const scheduleText = selectedOption.departureTime
+      ? "Departure: " + selectedOption.departureTime.slice(0, 5)
+      : "Exact scheduled departures unavailable";
+    const shareText = `🚇 NammaTransit AI Journey: ${params.origin} → ${params.destination}\n• Route: ${selectedOption.title}\n• Duration: ~${selectedOption.durationMinutes} mins (Fare: ${fareText})\n• ${scheduleText} (${selectedOption.totalStops} stops)\n(${selectedOption.scheduleSource})`;
 
     if (navigator.share) {
       try {

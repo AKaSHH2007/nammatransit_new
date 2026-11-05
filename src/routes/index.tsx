@@ -47,17 +47,17 @@ const features = [
   {
     icon: Ticket,
     title: "Official CMRL Fares",
-    text: "Exact station-to-station fares based on official CMRL fare tables with 20% smart card/digital QR discounts.",
+    text: "CMRL station-pair fares from its published fare chart (last fare update: 22 February 2021); unsupported bus, rail and Yellow Line fares are not guessed.",
   },
   {
     icon: Sparkles,
     title: "Intelligent Typo Search",
-    text: "Handles Tamil phonetics, misspellings, and colloquial station names (e.g. Koyeembedu → Koyambedu, Gindi → Guindy).",
+    text: "Automatically resolves spelling variations, phonetic mistakes, and colloquial names across Chennai locations.",
   },
   {
     icon: Navigation,
-    title: "Interactive Live-Style Map",
-    text: "CartoDB Dark Matter Leaflet map, glowing route polylines, transfer markers, and current user geolocation.",
+    title: "Interactive Route Map",
+    text: "Key-free Leaflet map with route geometry, stop markers, transfer walks, and optional user location.",
   },
   {
     icon: CheckCircle2,
@@ -140,33 +140,31 @@ function Index() {
               <div className="mt-4 space-y-3.5 text-xs">
                 {/* User query */}
                 <div className="ml-auto w-fit rounded-2xl rounded-br-xs bg-primary px-4 py-2 text-primary-foreground font-medium shadow-xs">
-                  Koyeembedu to Chennai Airport
+                  Try: Poonamali to Vadapalani
                 </div>
 
-                {/* Assistant response */}
+                {/* Assistant route preview: canonical names only; no hard-coded fare or schedule */}
                 <div className="rounded-2xl rounded-bl-xs border border-border/60 bg-secondary/70 p-3.5 text-foreground space-y-2">
                   <div className="flex items-center gap-1.5 text-[11px] text-accent font-semibold">
                     <Sparkles className="h-3.5 w-3.5" />
-                    Resolved "Koyeembedu" → <strong>Koyambedu</strong>
+                    Journey preview
                   </div>
-
                   <div className="border-t border-border/50 pt-2 text-muted-foreground space-y-1">
                     <div className="flex justify-between items-center text-foreground font-semibold">
-                      <span>Koyambedu → Chennai Airport</span>
-                      <span className="text-accent font-mono font-bold">₹40 (₹32 digital)</span>
+                      <span>Poonamallee → Vadapalani</span>
+                      <span className="text-accent font-mono font-bold">Route guidance</span>
                     </div>
                     <p className="text-[11px]">
-                      Board <strong>Green Line</strong> towards <strong>St. Thomas Mount</strong> at
-                      Koyambedu. Transfer at Alandur to <strong>Blue Line</strong> towards Airport.
+                      I'll match spelling variations, then search Metro, bus and suburban rail for your complete journey.
+                      Exact departures and fares are shown only when present in the loaded source data.
                     </p>
                   </div>
-
                   <div className="mt-2 flex items-center justify-between pt-1">
                     <span className="text-[10px] text-muted-foreground font-mono">
-                      CMRL Official Table · 33 min
+                      Static timetable · not live tracking
                     </span>
                     <span className="rounded-md bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
-                      Book on Chennai One
+                      Chennai One guidance
                     </span>
                   </div>
                 </div>
@@ -203,6 +201,16 @@ function Index() {
         ))}
       </section>
 
+      <section className="mx-auto max-w-6xl px-6 pt-8">
+        <p className="text-xs leading-relaxed text-muted-foreground">
+          Timetable source: the bundled Chennai GTFS feed is published by Ithu Ungal Soththu
+          (version 0.2.0) and supplies no feed start/end date. Schedules are static and may be
+          incomplete; confirm service changes with the relevant operator. No live vehicle GPS
+          or delay feed is currently connected.
+        </p>
+      </section>
+
+
       {/* Official Sources & Disclaimers Footer */}
       <footer className="mx-auto max-w-6xl px-6 py-14">
         <div className="rounded-2xl border border-border/60 bg-card/60 p-6">
@@ -217,7 +225,7 @@ function Index() {
             <div>
               <h4 className="font-semibold text-foreground mb-1">CMRL & MTC Published Fares</h4>
               <p>
-                Fare matrices reflect official CMRL station-to-station tables (chennaimetrorail.org)
+                CMRL fare chart (last fare update: 22 February 2021); confirm the latest ticket conditions with CMRL
                 and MTC fare stages. "Fare unavailable" is displayed if unverified.
               </p>
             </div>

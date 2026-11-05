@@ -111,10 +111,14 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
             )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground flex flex-wrap items-center gap-1.5">
-            <span className="font-semibold text-foreground">~{option.durationMinutes} mins</span>
+            <span className="font-semibold text-foreground">
+              {option.scheduleSource === "Timetable unavailable"
+                ? "~" + option.durationMinutes + " mins estimated"
+                : option.durationMinutes + " mins scheduled"}
+            </span>
             <span>·</span>
             <span className="font-semibold text-accent font-mono">
-              ₹{option.fare}
+              {option.fare > 0 ? "₹" + option.fare : "Fare unavailable"}
               {option.digitalFare && option.digitalFare < option.fare && (
                 <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                   (₹{option.digitalFare} digital)
@@ -128,10 +132,32 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
 
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[11px] font-medium text-foreground/80 font-mono">
-            Departure: {option.departureTime.slice(0, 5)}
+            {option.departureTime ? "Departure: " + option.departureTime.slice(0, 5) : "Exact scheduled departure unavailable"}
           </span>
         </div>
       </div>
+
+      {option.legs.some((leg) => leg.serviceFrequency) && (
+        <div className="mb-5 rounded-xl border border-amber-500/25 bg-amber-500/5 p-3.5">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-bold uppercase tracking-wider text-amber-300">
+              Yellow Line published service frequency
+            </span>
+            <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold text-amber-200">
+              Operating window: {option.legs.find((leg) => leg.serviceWindow)?.serviceWindow}
+            </span>
+          </div>
+          <p className="mt-2 text-xs leading-relaxed text-foreground">
+            {option.legs.find((leg) => leg.serviceFrequency)?.serviceFrequency}
+          </p>
+          <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+            {option.legs.find((leg) => leg.serviceNotice)?.serviceNotice}
+          </p>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Frequency guidance is not a fixed departure list for every station. Exact trip times are not included in the loaded Yellow Line timetable.
+          </p>
+        </div>
+      )}
 
       {/* Vertical Step-by-Step Timeline with Explicit Boarding & Alighting */}
       <div className="relative space-y-7 pl-1">
@@ -186,7 +212,9 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
 
                   <div className="text-right">
                     <span className="text-xs font-semibold text-foreground font-mono">
-                      ~{leg.durationMinutes} mins
+                      {option.scheduleSource === "Timetable unavailable"
+                        ? "~" + leg.durationMinutes + " mins estimated"
+                        : leg.durationMinutes + " mins scheduled"}
                     </span>
                     {leg.standardFare !== undefined && (
                       <div className="text-[11px] font-mono text-accent">
@@ -216,7 +244,7 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
                       </div>
                       {leg.departureTime && (
                         <div className="text-[11px] text-muted-foreground font-mono">
-                          Departs ~{leg.departureTime.slice(0, 5)}
+                          Scheduled departure: {leg.departureTime.slice(0, 5)}
                         </div>
                       )}
                     </div>
@@ -282,7 +310,7 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
                       </div>
                       {leg.arrivalTime && (
                         <div className="text-[11px] text-muted-foreground font-mono">
-                          Arrives ~{leg.arrivalTime.slice(0, 5)}
+                          Scheduled arrival: {leg.arrivalTime.slice(0, 5)}
                         </div>
                       )}
                     </div>
@@ -318,11 +346,11 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
             <div className="flex items-center gap-2">
               <Coins className="h-4 w-4 text-accent" />
               <span className="font-display text-xs font-bold uppercase tracking-wider text-foreground">
-                Official Fare Breakdown
+                Fare Breakdown (where available)
               </span>
             </div>
             <span className="text-[10px] text-muted-foreground">
-              Official CMRL / MTC / SR published rates
+              Fare values are source-based; verify with the operator before travel
             </span>
           </div>
 
@@ -350,7 +378,7 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
 
             <div className="border-t border-border/80 pt-2.5 flex justify-between items-center font-bold text-foreground">
               <div>
-                <span className="text-sm">Total Standard Fare</span>
+                <span className="text-sm">Total fare shown</span>
                 {option.discountAmount && option.discountAmount > 0 ? (
                   <p className="text-[11px] font-normal text-emerald-400 flex items-center gap-1">
                     <Sparkles className="h-3 w-3" />
@@ -367,6 +395,12 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
         </div>
       )}
 
+      {option.fare <= 0 && (
+        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+          Fare information is not available for this route in the configured fare data. No amount is being estimated here.
+        </div>
+      )}
+
       {/* FEATURE 6: Integrated Chennai One Official Booking Section */}
       <div className="mt-6">
         <ChennaiOneBooking option={option} />
@@ -378,13 +412,13 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
         <div>
           <p className="font-semibold text-foreground">
             {option.legs.some((l) => l.lineName?.toLowerCase().includes("yellow"))
-              ? "Official CMRL Phase 2 Yellow Line Grounding"
-              : "Official Chennai Transit Timetable Grounding"}
+              ? "Supplemental Yellow Line station route"
+              : "Static GTFS timetable source"}
           </p>
           <p className="mt-1 leading-relaxed">
-            {option.legs.some((l) => l.lineName?.toLowerCase().includes("yellow"))
-              ? "Includes the operational Chennai Metro Phase 2 Corridor 4 (Poonamallee Bypass ↔ Vadapalani, commenced 11 October 2026). Timetable is grounded in CMRL frequency guidelines (10m peak, 15m off-peak); live vehicle GPS telemetry is not public."
-              : "Schedules, routes and stations are grounded in verified Chennai transit GTFS datasets and official CMRL station-to-station fare matrices. Live GPS vehicle telemetry is not active."}
+            {option.scheduleSource === "Timetable unavailable"
+              ? "The Yellow Line station sequence is provided by the supplemental route dataset. The bundled GTFS feed does not currently contain a validated trip timetable or exact fare for this route, so no departure, arrival or fare is estimated here."
+              : "Scheduled times are read from the bundled static GTFS feed (publisher: Ithu Ungal Soththu, version 0.2.0; no feed start/end date supplied). The feed may be incomplete or outdated. These are not live delays or vehicle locations; confirm service changes with the operator."}
           </p>
         </div>
       </div>

@@ -36,6 +36,9 @@ export type JourneyLeg = {
   discountNote?: string;
   color: string;
   instruction?: string;
+  serviceWindow?: string;
+  serviceFrequency?: string;
+  serviceNotice?: string;
 };
 
 export type JourneyHighlight =
@@ -64,7 +67,7 @@ export type MultimodalJourneyOption = {
   compositeScore?: number;
   isMixedMode?: boolean;
   fareBreakdown?: Array<{ mode: TransportMode; label: string; amount: number }>;
-  scheduleSource: "Static GTFS schedule" | "Estimated GTFS schedule";
+  scheduleSource: "Static GTFS schedule" | "Estimated GTFS schedule" | "Timetable unavailable";
   isLiveTracking: false;
 };
 

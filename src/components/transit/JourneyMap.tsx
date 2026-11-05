@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import "leaflet/dist/leaflet.css";
 import {
   Compass,
   Footprints,
@@ -48,6 +49,7 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
   } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [geoError, setGeoError] = useState<string | null>(null);
+  const [mapError, setMapError] = useState<string | null>(null);
 
   // Initialize Leaflet Map on mount
   useEffect(() => {
@@ -59,15 +61,6 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
       try {
         const L = (await import("leaflet")).default;
 
-        // Inject leaflet CSS if not already present
-        if (!document.getElementById("leaflet-css")) {
-          const link = document.createElement("link");
-          link.id = "leaflet-css";
-          link.rel = "stylesheet";
-          link.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
-          document.head.appendChild(link);
-        }
-
         if (!mapInstanceRef.current && mapContainerRef.current && isMounted) {
           // Initialize map with CartoDB Dark Matter tiles (premium dark mode transit tiles)
           const map = L.map(mapContainerRef.current, {
@@ -77,24 +70,28 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
             attributionControl: false,
           });
 
-          L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+          // Public OpenStreetMap raster tiles do not require a Google or Mapbox API key.
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
             maxZoom: 19,
-            subdomains: "abcd",
+            attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap contributors</a>",
           }).addTo(map);
 
-          // Custom attribution
           L.control
             .attribution({ position: "bottomright", prefix: false })
-            .addAttribution(
-              '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" class="text-[#00D6A3]">OpenStreetMap</a> &copy; CARTO',
-            )
             .addTo(map);
 
           mapInstanceRef.current = map;
           setIsLeafletReady(true);
+          map.whenReady(() => {
+            requestAnimationFrame(() => {
+              map.invalidateSize(true);
+              window.setTimeout(() => map.invalidateSize(true), 250);
+            });
+          });
         }
       } catch (err) {
         console.warn("Leaflet initialization caught:", err);
+        if (isMounted) setMapError("The map could not be initialized. Check your network connection and reload.");
       }
     }
 
@@ -119,6 +116,7 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
       const L = (await import("leaflet")).default;
       const map = mapInstanceRef.current;
       if (!map || !isSubscribed) return;
+      map.invalidateSize(true);
 
       // Clean up existing layers
       routeLayersRef.current.forEach((layer) => map.removeLayer(layer));
@@ -471,7 +469,17 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
           isFullscreen ? "h-[calc(100vh-140px)]" : "h-80 sm:h-96"
         }`}
       >
-        <div ref={mapContainerRef} className="h-full w-full" />
+        <div ref={mapContainerRef} className="h-full w-full" role="application" aria-label="Interactive Chennai public transport map" />
+        {mapError && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#07111F]/90 p-4 text-center text-xs text-rose-300">
+            {mapError}
+          </div>
+        )}
+        {!isLeafletReady && !mapError && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-[#07111F]/80 text-xs text-slate-300">
+            Loading Chennai map…
+          </div>
+        )}
 
         {/* Selected Station Popover Tooltip */}
         {selectedMarkerStop && (
@@ -564,9 +572,10 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
         <div className="flex items-start gap-1.5 text-[11px] text-[#64748B] border-t border-[#1E293B]/70 pt-1.5">
           <Info className="h-3.5 w-3.5 text-[#00D6A3] shrink-0 mt-0.2" />
           <span>
-            <b>Live Tracking Disclaimer:</b> Routes and stops represent official static GTFS
-            timetable data. Real-time GPS bus and train tracking feeds are currently not publicly
-            broadcast by CMRL or MTC; vehicle arrival times are estimated from official timetables.
+            <b>Map data:</b> This is an interactive route map, not live vehicle tracking. Scheduled
+            services use the loaded static GTFS timetable; routes without timetable coverage show
+            station geometry only. Real-time vehicle locations are displayed only when an authorized
+            live feed is connected.
           </span>
         </div>
       </div>

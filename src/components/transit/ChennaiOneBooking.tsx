@@ -56,7 +56,7 @@ export function getChennaiOneBookingInfo(
       "Download or open the Chennai One app by CUMTA (or visit chennaione.in).",
       `Select ${mode === "metro" ? "Metro" : mode === "bus" ? "Bus" : "Suburban Train"} ticketing option.`,
       `Set starting station as ${origin} and destination as ${destination}.`,
-      "Choose QR ticket or Smart Card recharge and proceed to checkout using UPI or card.",
+      "Choose an available ticket type, verify its current price and any discount, then complete payment in the official app.",
       "Show generated QR code at AFC gates or bus conductor scanner.",
     ],
   };
@@ -102,13 +102,14 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
     }
   };
 
-  const openChennaiOneWeb = (leg?: JourneyLeg | null) => {
-    // Official Chennai One web portal or app deep link
-    window.open(CHENNAI_ONE_URLS.web, "_blank", "noopener,noreferrer");
+  const openChennaiOneWeb = (_leg?: JourneyLeg | null) => {
+    // No documented route-prefill deep link is configured. Navigate directly
+    // to the official portal so popup blockers cannot leave a blank tab.
+    window.location.assign(CHENNAI_ONE_URLS.web);
   };
 
   const openPlayStore = () => {
-    window.open(CHENNAI_ONE_URLS.playStore, "_blank", "noopener,noreferrer");
+    window.location.assign(CHENNAI_ONE_URLS.playStore);
   };
 
   if (compact) {
@@ -118,7 +119,11 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
           <Ticket className="h-3.5 w-3.5 text-[#00D6A3]" />
           <span>Chennai One:</span>
           <span className="font-semibold text-white font-mono">
-            ₹{option.digitalFare ?? Math.round(option.fare * 0.8)}
+            {option.digitalFare && option.digitalFare > 0
+              ? "₹" + option.digitalFare
+              : option.fare > 0
+                ? "₹" + option.fare
+                : "Fare unavailable"}
           </span>
           {option.discountAmount && option.discountAmount > 0 ? (
             <span className="rounded bg-[#00D6A3]/20 px-1 py-0.2 text-[10px] font-bold text-[#00D6A3]">
@@ -127,17 +132,16 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
           ) : null}
         </div>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowModal(true);
-          }}
+        <a
+          href={CHENNAI_ONE_URLS.web}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
           className="inline-flex items-center gap-1 rounded-lg bg-[#00D6A3] px-2.5 py-1 text-[11px] font-semibold text-[#07111F] transition hover:bg-[#00D6A3]/90 shadow-sm"
         >
           <Smartphone className="h-3 w-3" />
           <span>Book on Chennai One</span>
-        </button>
+        </a>
 
         {showModal && (
           <BookingGuideModal
@@ -173,9 +177,15 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
         </div>
 
         <div className="text-right">
-          <div className="text-xs text-[#94A3B8]">Digital Fare</div>
+          <div className="text-xs text-[#94A3B8]">
+            {option.digitalFare && option.digitalFare > 0 ? "Digital fare" : option.fare > 0 ? "Standard fare" : "Fare"}
+          </div>
           <div className="font-display text-lg font-bold text-[#00D6A3] font-mono tabular-nums">
-            ₹{option.digitalFare ?? Math.round(option.fare * 0.8)}
+            {option.digitalFare && option.digitalFare > 0
+              ? "₹" + option.digitalFare
+              : option.fare > 0
+                ? "₹" + option.fare
+                : "Fare unavailable"}
           </div>
         </div>
       </div>
@@ -185,8 +195,7 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#00D6A3]/10 border border-[#00D6A3]/25 px-3 py-2 text-xs text-[#00D6A3]">
           <Sparkles className="h-4 w-4 shrink-0" />
           <span>
-            <b>20% Flat Discount</b> automatically applies to all Chennai Metro QR & Smart Card
-            tickets booked via Chennai One.
+            Check the current QR-ticket or Smart Card discount displayed in Chennai One before payment. The discount depends on the applicable ticket rules.
           </span>
         </div>
       )}
@@ -214,10 +223,16 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
                   <span>{leg.lineName}</span>
                   <span>·</span>
                   <span className="font-mono text-white">
-                    ₹{leg.digitalFare ?? leg.standardFare ?? (leg.fareRupees || 10)}
+                    {leg.digitalFare && leg.digitalFare > 0
+                      ? "₹" + leg.digitalFare
+                      : leg.standardFare && leg.standardFare > 0
+                        ? "₹" + leg.standardFare
+                        : leg.fareRupees && leg.fareRupees > 0
+                          ? "₹" + leg.fareRupees
+                          : "Fare unavailable"}
                   </span>
-                  {leg.mode === "metro" && (
-                    <span className="text-[#00D6A3] font-medium">(20% off token)</span>
+                  {leg.digitalFare && leg.standardFare && leg.digitalFare < leg.standardFare && (
+                    <span className="text-[#00D6A3] font-medium">(digital discount)</span>
                   )}
                 </div>
               </div>
@@ -242,17 +257,15 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
 
       {/* Main Action Bar */}
       <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedLegToBook(null);
-            setShowModal(true);
-          }}
+        <a
+          href={CHENNAI_ONE_URLS.web}
+          target="_blank"
+          rel="noopener noreferrer"
           className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#00D6A3] px-4 py-2.5 text-xs font-bold text-[#07111F] transition hover:bg-[#00D6A3]/90 shadow-glow"
         >
           <Smartphone className="h-4 w-4" />
           <span>{getBookingActionText()}</span>
-        </button>
+        </a>
 
         <a
           href={CHENNAI_ONE_URLS.web}
@@ -401,17 +414,23 @@ function BookingGuideModal({
   destinationStation,
   onClose,
 }: BookingGuideModalProps) {
-  const fare = leg
-    ? (leg.digitalFare ?? leg.standardFare ?? 20)
-    : (option.digitalFare ?? Math.round(option.fare * 0.8));
+  const legFare = leg
+    ? [leg.digitalFare, leg.standardFare, leg.fareRupees].find(
+        (value): value is number => typeof value === "number" && value > 0,
+      )
+    : undefined;
+  const optionFare = [option.digitalFare, option.fare].find(
+    (value): value is number => typeof value === "number" && value > 0,
+  );
+  const fare = leg ? legFare : optionFare;
 
   const openApp = () => {
-    // Attempt app URI scheme or fallback to website
-    window.open(CHENNAI_ONE_URLS.web, "_blank", "noopener,noreferrer");
+    // Use the official portal until a documented app deep link is available.
+    window.location.assign(CHENNAI_ONE_URLS.web);
   };
 
   const openStore = () => {
-    window.open(CHENNAI_ONE_URLS.playStore, "_blank", "noopener,noreferrer");
+    window.location.assign(CHENNAI_ONE_URLS.playStore);
   };
 
   return (
@@ -445,7 +464,7 @@ function BookingGuideModal({
         <div className="mt-4 rounded-xl border border-[#1E293B] bg-[#17263B] p-3.5 space-y-2">
           <div className="flex items-center justify-between text-xs text-[#94A3B8]">
             <span>Selected Journey</span>
-            <span className="font-mono text-[#00D6A3] font-bold">Estimated ₹{fare}</span>
+            <span className="font-mono text-[#00D6A3] font-bold">{fare && fare > 0 ? "Fare shown: ₹" + fare : "Fare unavailable"}</span>
           </div>
 
           <div className="flex items-center gap-2 text-sm font-semibold text-white">
@@ -492,8 +511,8 @@ function BookingGuideModal({
               3
             </span>
             <p>
-              Complete payment via UPI/Cards to generate your official digital QR ticket (20%
-              discount applied for CMRL).
+              Review the ticket type, displayed price, and any eligible discount in Chennai One.
+              Complete payment only in the official app or portal.
             </p>
           </div>
         </div>

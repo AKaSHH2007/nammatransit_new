@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   ArrowLeftRight,
   ArrowRight,
@@ -30,10 +30,18 @@ export function JourneySearchSummary({
   const [origin, setOrigin] = useState(params.origin);
   const [destination, setDestination] = useState(params.destination);
   const [travelDate, setTravelDate] = useState(
-    params.travelDate || new Date().toISOString().slice(0, 10),
+    params.travelDate || new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()),
   );
-  const [departureTime, setDepartureTime] = useState(params.departureTime || "08:30");
+  const [departureTime, setDepartureTime] = useState(params.departureTime || "");
   const [preferredMode, setPreferredMode] = useState<ModePreference>(params.preferredMode || "any");
+
+  useEffect(() => {
+    setOrigin(params.origin);
+    setDestination(params.destination);
+    setTravelDate(params.travelDate || new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
+    setDepartureTime(params.departureTime || "");
+    setPreferredMode(params.preferredMode || "any");
+  }, [params.origin, params.destination, params.travelDate, params.departureTime, params.preferredMode]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -89,7 +97,7 @@ export function JourneySearchSummary({
               <span>·</span>
               <span className="inline-flex items-center gap-1 font-mono">
                 <Clock className="h-3.5 w-3.5 text-muted-foreground" />
-                {params.departureTime || "08:30"}
+                {params.departureTime || "Next available"}
               </span>
               <span>·</span>
               <span className="text-accent font-medium">Multimodal GTFS</span>

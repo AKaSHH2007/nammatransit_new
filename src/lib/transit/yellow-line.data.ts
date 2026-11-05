@@ -7,8 +7,10 @@
  * - Operational Passenger Section: Poonamallee Bypass ↔ Vadapalani (11 Stations)
  * - Service Commencement: 11 October 2026
  * - Official Source: CMRL Press Releases (https://chennaimetrorail.org/press-release/)
- * - Data Type: Static scheduled timetable and verified stop network.
- *              Live train tracking is NOT available for this new corridor.
+ * - Service-window reference: CMRL Time Table (https://chennaimetrorail.org/time-table/)
+ * - Data Type: Station geometry and published headway/frequency guidance only.
+ *              This supplement is NOT a per-trip station timetable.
+ *              Live train tracking is NOT available in this application.
  *
  * OPERATING SCHEDULE & FREQUENCY:
  * - Operating Hours: 06:00 to 21:00 (Daily)
@@ -44,8 +46,10 @@ export const YELLOW_LINE_METADATA = {
   operatingHours: "06:00–21:00",
   serviceStartDate: "2026-10-11",
   sourceUrl: "https://chennaimetrorail.org/press-release/",
+  timetableUrl: "https://chennaimetrorail.org/time-table/",
+  serviceNoticeDate: "2026-10-21",
   provenance:
-    "Official CMRL Announcements & Phase 2 Corridor 4 Timetable (Effective 11 October 2026). Static scheduled timetable; live GPS tracking not currently active.",
+    "CMRL Phase 2 Corridor 4 station route and published service-frequency guidance. The bundled supplement does not contain an exact station-by-station train departure list; live GPS tracking is not connected.",
   isLiveTracking: false as const,
 };
 
@@ -203,6 +207,70 @@ export function getYellowLineHeadwayMinutes(
   }
 
   return 15;
+}
+
+export interface YellowLineServiceInfo {
+  operatingWindow: string;
+  frequencyText: string;
+  isOperatingAtRequestedTime: boolean | null;
+  requestedTime?: string;
+  notice: string;
+}
+
+/**
+ * Returns the published Corridor 4 service window and headway bands.
+ * These are frequency intervals, not individual train departure timestamps.
+ * Holiday recognition must be supplied by an authoritative holiday calendar;
+ * this helper only identifies Sundays from the supplied service date.
+ */
+export function getYellowLineServiceInfo(
+  serviceDate?: string,
+  requestedTime?: string,
+): YellowLineServiceInfo {
+  const operatingWindow = "06:00–21:00";
+  const sunday = serviceDate
+    ? new Date(serviceDate + "T12:00:00.000Z").getUTCDay() === 0
+    : false;
+
+  const frequencyText = sunday
+    ? "Every 15 minutes on Sundays and public holidays (06:00–21:00)."
+    : "Monday–Saturday: every 15 minutes from 06:00–08:00, 11:00–17:00 and 20:00–21:00; every 10 minutes during 08:00–11:00 and 17:00–20:00. Sundays and public holidays: every 15 minutes.";
+
+  if (!requestedTime) {
+    return {
+      operatingWindow,
+      frequencyText,
+      isOperatingAtRequestedTime: null,
+      notice: "Published service-frequency guidance only. Exact station-level departure times are not present in the loaded Yellow Line GTFS trips.",
+    };
+  }
+
+  const match = requestedTime.match(/^(\d{1,2}):(\d{2})(?::\d{2})?$/);
+  if (!match) {
+    return {
+      operatingWindow,
+      frequencyText,
+      isOperatingAtRequestedTime: null,
+      requestedTime,
+      notice: "Could not interpret the requested time. The frequency bands are guidance, not exact departure times.",
+    };
+  }
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const valid = hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+  const totalMinutes = hour * 60 + minute;
+  const operating = valid && totalMinutes >= 360 && totalMinutes < 1260;
+
+  return {
+    operatingWindow,
+    frequencyText,
+    isOperatingAtRequestedTime: operating,
+    requestedTime,
+    notice: operating
+      ? "The requested time falls within the published service window. Headway is a frequency interval, not a guaranteed departure at this exact station and minute."
+      : "The requested time is outside the published 06:00–21:00 operating window. Confirm the last service with CMRL before travelling.",
+  };
 }
 
 /**

@@ -5,16 +5,17 @@
  * 1. Chennai Metro Rail Limited (CMRL) Official Station-to-Station Fare Table & Distance Slabs
  *    - Source: https://chennaimetrorail.org/cmrl-fare-table/
  *    - Effective: 2024-2026
- *    - Digital / Smart Card Discount: 20% discount for Chennai One / CMRL mobile app / WhatsApp QR
- * 2. Metropolitan Transport Corporation (MTC Chennai) Official Stage Fare System
- *    - Source: MTC Tamil Nadu Published Fare Chart
- *    - Categories: Ordinary (Free for women under Vidiyal Payanam Scheme), Express/Deluxe, AC Bus
- * 3. Southern Railway (Chennai Suburban EMU Division)
- *    - Source: Southern Railway Suburban Fare Table (Second Class Ordinary & First Class)
+ *    - Official page lists the last fare update as 22 February 2021.
+ *    - Its separate 20% discounted-fare chart is published by CMRL.
+ * 2. MTC and 3. Southern Railway:
+ *    Route/station-specific fare tables are not present in this application yet.
+ *    Those fares are deliberately returned as unavailable rather than inferred from stop counts.
+ * 4. Yellow Line:
+ *    Its station sequence is available separately, but an authoritative station-pair fare matrix
+ *    has not been loaded. Yellow Line fares are therefore not estimated here.
  */
 
 import type { TransportMode } from "./multimodal-types";
-import { matchYellowLineStation } from "./yellow-line.data";
 
 export interface FareDetail {
   mode: TransportMode;
@@ -111,9 +112,9 @@ export const CMRL_STATION_ZONES: Record<string, string> = {
   "st.thomas mount": "CMRL-SMM",
 };
 
-// CMRL Official Station-to-Station Fare Matrix (from official CMRL fare chart)
-// Key: `${zoneA}_${zoneB}` -> token/counter fare in INR
-// Verified against CMRL GTFS fare_rules.txt & official fare chart 2024-2026
+// CMRL station-to-station fare values transcribed from the official fare chart.
+// Key: `${zoneA}_${zoneB}` -> standard token/counter fare in INR.
+// CMRL's official fare page labels the underlying fare update 22 February 2021.
 const CMRL_OFFICIAL_FARE_TABLE: Record<string, number> = {
   // Key Blue line & Green Line pairs
   "CMRL-SGU_CMRL-SAP": 30, // Guindy -> Airport (₹30 standard token, ₹24 digital)
@@ -312,31 +313,6 @@ export function calculateMetroFare(
   const normFrom = normalizeStation(fromStation);
   const normTo = normalizeStation(toStation);
 
-  // Check if this is within Yellow Line (Phase 2 Corridor 4)
-  const yFrom = matchYellowLineStation(fromStation);
-  const yTo = matchYellowLineStation(toStation);
-
-  if (yFrom && yTo && yFrom.sequence !== yTo.sequence) {
-    const hopCount = Math.abs(yFrom.sequence - yTo.sequence);
-    const standard = Math.min(40, Math.max(10, Math.ceil(hopCount / 2.5) * 10));
-    const digital = Math.round(standard * 0.8); // 20% discount
-
-    return {
-      mode: "metro",
-      operator: "Chennai Metro (CMRL)",
-      category: "Phase 2 Corridor 4 Standard Ticket",
-      fromStation: yFrom.name,
-      toStation: yTo.name,
-      standardFare: standard,
-      digitalFare: digital,
-      discountPercentage: 20,
-      discountNote: "20% discount on Chennai One / CMRL Smart Card / WhatsApp QR",
-      isAvailable: true,
-      source: "CMRL Official Fare Table 2024-2026 (Phase 2 Corridor 4 Slabs)",
-      effectiveDate: "2024-2026",
-    };
-  }
-
   // Look up in CMRL station zone map
   const zoneA =
     CMRL_STATION_ZONES[normFrom] ||
@@ -348,23 +324,6 @@ export function calculateMetroFare(
     Object.entries(CMRL_STATION_ZONES).find(([k]) => normTo.includes(k) || k.includes(normTo))?.[1];
 
   if (zoneA && zoneB) {
-    if (zoneA === zoneB) {
-      return {
-        mode: "metro",
-        operator: "Chennai Metro (CMRL)",
-        category: "Same Station / Platform Entry",
-        fromStation,
-        toStation,
-        standardFare: 10,
-        digitalFare: 8,
-        discountPercentage: 20,
-        discountNote: "20% discount via Chennai One app",
-        isAvailable: true,
-        source: "CMRL Official Fare Table",
-        effectiveDate: "2024-2026",
-      };
-    }
-
     const key1 = `${zoneA}_${zoneB}`;
     const key2 = `${zoneB}_${zoneA}`;
     const fare = CMRL_OFFICIAL_FARE_TABLE[key1] || CMRL_OFFICIAL_FARE_TABLE[key2];
@@ -380,39 +339,12 @@ export function calculateMetroFare(
         standardFare: fare,
         digitalFare,
         discountPercentage: 20,
-        discountNote: "20% digital ticket discount on Chennai One & CMRL QR",
+        discountNote: "20% discounted fare in the official CMRL fare chart",
         isAvailable: true,
         source: "https://chennaimetrorail.org/cmrl-fare-table/",
-        effectiveDate: "2024-2026",
+        effectiveDate: "2021-02-22",
       };
     }
-  }
-
-  // If specific pair not in matrix table, fallback to official CMRL distance slab rules by stops
-  if (totalStops !== undefined && totalStops > 0) {
-    let standard = 10;
-    if (totalStops <= 2) standard = 10;
-    else if (totalStops <= 4) standard = 20;
-    else if (totalStops <= 7) standard = 30;
-    else if (totalStops <= 11) standard = 40;
-    else standard = 50;
-
-    const digital = Math.round(standard * 0.8);
-    return {
-      mode: "metro",
-      operator: "Chennai Metro (CMRL)",
-      category: "CMRL Official Stage Distance Slab",
-      fromStation,
-      toStation,
-      standardFare: standard,
-      digitalFare: digital,
-      discountPercentage: 20,
-      discountNote: "20% discount on Chennai One / CMRL Smart Card",
-      isAvailable: true,
-      source:
-        "CMRL Official Distance Fare Slabs (1-2km: ₹10, 2-4km: ₹20, 4-6km: ₹30, 6-9km: ₹40, >9km: ₹50)",
-      effectiveDate: "2024-2026",
-    };
   }
 
   return {
@@ -427,7 +359,7 @@ export function calculateMetroFare(
     isOfficial: false,
     fareUnavailable: true,
     source: "CMRL Fare Table",
-    effectiveDate: "2024-2026",
+    effectiveDate: "2021-02-22",
   };
 }
 
@@ -439,80 +371,46 @@ export function calculateBusFare(
   fromStation: string,
   toStation: string,
   routeNumber?: string,
-  stopsCount: number = 6,
+  _stopsCount: number = 0,
 ): FareDetail {
-  const isAC = routeNumber?.toLowerCase().includes("ac") || routeNumber?.startsWith("570A");
-  const isExpress =
-    routeNumber?.includes("CT") || routeNumber?.includes("E") || routeNumber?.includes("D");
-
-  let standard: number;
-  let category: string;
-
-  if (isAC) {
-    category = "MTC Air-Conditioned Deluxe (Volvo/Electric)";
-    if (stopsCount <= 4) standard = 25;
-    else if (stopsCount <= 8) standard = 35;
-    else standard = 45;
-  } else if (isExpress) {
-    category = "MTC Express / Deluxe Bus";
-    if (stopsCount <= 3) standard = 10;
-    else if (stopsCount <= 6) standard = 15;
-    else if (stopsCount <= 10) standard = 20;
-    else standard = 25;
-  } else {
-    category = "MTC Ordinary Bus (White board)";
-    if (stopsCount <= 3) standard = 5;
-    else if (stopsCount <= 6) standard = 9;
-    else if (stopsCount <= 10) standard = 13;
-    else standard = 17;
-  }
-
+  // No verified route-specific MTC fare-stage table is currently loaded.
+  // Do not infer a fare from the number of stops or route-name heuristics.
   return {
     mode: "bus",
     operator: "MTC Chennai",
-    category,
+    category: routeNumber ? "MTC route fare not verified" : "MTC fare not verified",
     fromStation,
     toStation,
-    standardFare: standard,
-    digitalFare: standard, // MTC tickets are standard fare on Chennai One app
-    discountPercentage: 0,
-    discountNote: "Women travel free in Ordinary Pink buses (Vidiyal Payanam Scheme)",
-    isAvailable: true,
-    source: "Metropolitan Transport Corporation (MTC) Chennai Fare Stages",
-    effectiveDate: "2024-2026",
+    standardFare: null,
+    digitalFare: null,
+    isAvailable: false,
+    isOfficial: false,
+    fareUnavailable: true,
+    source: "Official route-specific MTC fare data not loaded",
+    effectiveDate: "Unavailable",
   };
 }
 
-/**
- * Calculate official Southern Railway Suburban EMU Train Fare
- * Source: Southern Railway Chennai Suburban Division
- */
 export function calculateTrainFare(
   fromStation: string,
   toStation: string,
-  stopsCount: number = 5,
+  _stopsCount: number = 0,
 ): FareDetail {
-  // Southern Railway Suburban Fare Table:
-  // 1-20 km (1-7 stops): ₹5
-  // 21-45 km (8-16 stops, e.g. Chennai Beach to Tambaram): ₹10
-  // 46-70 km: ₹15
-  let standard = 5;
-  if (stopsCount > 16) standard = 15;
-  else if (stopsCount > 7) standard = 10;
-
+  // Suburban fare depends on the applicable railway fare-distance table.
+  // Stop-count bands are not a valid substitute for station distance/fare data.
   return {
     mode: "train",
     operator: "Southern Railway (Chennai Suburban)",
-    category: "Suburban EMU Second Class Ordinary",
+    category: "Suburban fare not verified",
     fromStation,
     toStation,
-    standardFare: standard,
-    digitalFare: standard, // UTS / Chennai One booking
-    discountPercentage: 0,
-    discountNote: "First Class seasonal or daily tickets available at ticket counter / UTS",
-    isAvailable: true,
-    source: "Southern Railway Chennai Suburban Fare Table",
-    effectiveDate: "2024-2026",
+    standardFare: null,
+    digitalFare: null,
+    isAvailable: false,
+    isOfficial: false,
+    fareUnavailable: true,
+    source: "Official Southern Railway station-pair fare data not loaded",
+    effectiveDate: "Unavailable",
   };
 }
 

@@ -130,15 +130,17 @@ const COMMON_ALIASES: Record<string, string> = {
   "t nagar bus terminus": "T. Nagar",
 
   // Poonamallee variations
-  poonamali: "Poonamallee",
-  poonamalle: "Poonamallee",
-  poonamallee: "Poonamallee",
-  punamallee: "Poonamallee",
-  punamali: "Poonamallee",
-  poonamally: "Poonamallee",
+  poonamali: "Poonamallee Bus Stand",
+  poonamalle: "Poonamallee Bus Stand",
+  poonamallee: "Poonamallee Bus Stand",
+  punamallee: "Poonamallee Bus Stand",
+  punamali: "Poonamallee Bus Stand",
+  poonamally: "Poonamallee Bus Stand",
   "poonamallee bypass": "Poonamallee Bypass",
   "poonamali bypass": "Poonamallee Bypass",
-  "poonamalle bus stand": "Poonamallee",
+  "poonamallee bypass": "Poonamallee Bypass",
+  "poonamali bypass": "Poonamallee Bypass",
+  "poonamalle bus stand": "Poonamallee Bus Stand",
 
   // Vadapalani variations
   vadapalani: "Vadapalani",
@@ -342,8 +344,26 @@ function resolveLocationRaw(rawInput: string): ResolutionResult {
     }
   }
 
-  const clean = cleanTransitInput(input);
   const rawLower = input.toLowerCase().trim();
+
+  // Match complete place names before removing generic suffixes. This keeps
+  // Poonamallee Bypass distinct from Poonamallee Bus Stand.
+  const fullNameKey = rawLower.replace(/[’']/g, "").replace(/\s+/g, " ").trim();
+  if (COMMON_ALIASES[fullNameKey]) {
+    const canonical = COMMON_ALIASES[fullNameKey]!;
+    return {
+      input,
+      resolved: canonical,
+      canonicalName: canonical,
+      confidence: 1,
+      isCorrected: canonical.toLowerCase() !== fullNameKey,
+      correctionMessage: canonical.toLowerCase() !== fullNameKey
+        ? `I understood your location as ${canonical}.`
+        : undefined,
+    };
+  }
+
+  const clean = cleanTransitInput(input);
 
   // 2. Check exact alias dictionary match
   if (COMMON_ALIASES[rawLower]) {
@@ -540,44 +560,44 @@ export function extractAndResolveLocations(text: string): {
   destination?: ResolutionResult;
   disambiguationPrompt?: string;
 } {
-  const normText = cleanTransitInput(text);
+  const input = (text || "").trim();
+  if (!input) return {};
 
-  // Match patterns like "from X to Y", "start from X reach Y", "between X and Y"
-  const fromToMatch = text.match(
-    /\b(?:from|starting from|start at|board at|leave)\s+([a-zA-Z0-9. ']+?)\s+(?:to|towards|reach|till|heading to)\s+([a-zA-Z0-9. ']+)(?:$|\?|[.,!])/i,
-  );
+  const cleanEndpoint = (value: string) =>
+    value
+      .replace(/\s+(?:on|via|using|by)\s+(?:the\s+)?(?:(?:blue|green|yellow)\s+line|metro|bus|train|suburban(?:\s+rail(?:way)?)?)\b.*$/i, "")
+      .replace(/^[\s,;:]+|[\s,;:.!?]+$/g, "")
+      .trim();
 
-  if (fromToMatch && fromToMatch[1] && fromToMatch[2]) {
-    const origin = resolveLocation(fromToMatch[1]);
-    const destination = resolveLocation(fromToMatch[2]);
-    let prompt: string | undefined;
+  const resolvePair = (rawOrigin: string, rawDestination: string) => {
+    const origin = resolveLocation(cleanEndpoint(rawOrigin));
+    const destination = resolveLocation(cleanEndpoint(rawDestination));
+    let disambiguationPrompt: string | undefined;
 
-    if (origin.isAmbiguous && origin.ambiguousCandidates) {
-      prompt = `For your starting point "${origin.input}", did you mean ${origin.ambiguousCandidates.join(" or ")}?`;
-    } else if (destination.isAmbiguous && destination.ambiguousCandidates) {
-      prompt = `For your destination "${destination.input}", did you mean ${destination.ambiguousCandidates.join(" or ")}?`;
+    if (origin.isAmbiguous && origin.ambiguousCandidates?.length) {
+      disambiguationPrompt = "For your starting point \"" + origin.input + "\", did you mean " + origin.ambiguousCandidates.join(" or ") + "?";
+    } else if (destination.isAmbiguous && destination.ambiguousCandidates?.length) {
+      disambiguationPrompt = "For your destination \"" + destination.input + "\", did you mean " + destination.ambiguousCandidates.join(" or ") + "?";
     }
+    return { origin, destination, disambiguationPrompt };
+  };
 
-    return { origin, destination, disambiguationPrompt: prompt };
-  }
-
-  // Single destination patterns: "to airport", "go to vadapalani"
-  const toMatch = text.match(
-    /\b(?:to|reach|towards|till|going to)\s+([a-zA-Z0-9. ']+)(?:$|\?|[.,!])/i,
+  const fromTo = input.match(
+    /\b(?:from|starting\s+from|start(?:ing)?\s+at|board\s+at|leave\s+from)\s+(.+?)\s+(?:to|towards|reach|till|heading\s+to)\s+(.+?)\s*$/i,
   );
-  if (toMatch && toMatch[1]) {
-    const destination = resolveLocation(toMatch[1]);
-    return { destination };
-  }
+  if (fromTo?.[1] && fromTo[2]) return resolvePair(fromTo[1], fromTo[2]);
 
-  // Single origin pattern: "from guindy"
-  const fromMatch = text.match(
-    /\b(?:from|starting at|start from|board at)\s+([a-zA-Z0-9. ']+)(?:$|\?|[.,!])/i,
-  );
-  if (fromMatch && fromMatch[1]) {
-    const origin = resolveLocation(fromMatch[1]);
-    return { origin };
-  }
+  const between = input.match(/\bbetween\s+(.+?)\s+and\s+(.+?)\s*$/i);
+  if (between?.[1] && between[2]) return resolvePair(between[1], between[2]);
+
+  const barePair = input.match(/^\s*(.+?)\s+(?:to|towards)\s+(.+?)\s*$/i);
+  if (barePair?.[1] && barePair[2]) return resolvePair(barePair[1], barePair[2]);
+
+  const toMatch = input.match(/\b(?:to|reach|towards|till|going\s+to|heading\s+to)\s+(.+?)\s*$/i);
+  if (toMatch?.[1]) return { destination: resolveLocation(cleanEndpoint(toMatch[1])) };
+
+  const fromMatch = input.match(/\b(?:from|starting\s+from|starting\s+at|start\s+from|start\s+at|board\s+at)\s+(.+?)\s*$/i);
+  if (fromMatch?.[1]) return { origin: resolveLocation(cleanEndpoint(fromMatch[1])) };
 
   return {};
 }

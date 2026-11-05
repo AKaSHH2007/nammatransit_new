@@ -7,6 +7,13 @@ import {
   calculateJourneyFareSummary,
 } from "./fares";
 import { resolveLocation } from "./location-resolver";
+import {
+  YELLOW_LINE_STATIONS,
+  YELLOW_LINE_INTERSTATION_MINUTES,
+  getYellowLineServiceInfo,
+  matchYellowLineStation,
+  getYellowLineTripDetails,
+} from "./yellow-line.data";
 import type {
   JourneyHighlight,
   JourneyLeg,
@@ -201,60 +208,50 @@ export function calculateJourneyHighlights(
 ): MultimodalJourneyOption[] {
   if (options.length === 0) return options;
 
-  let minDuration = Infinity;
-  let minFare = Infinity;
-  let minTransfers = Infinity;
-  let minWalking = Infinity;
+  const fareVerified = options.filter((option) =>
+    Number.isFinite(option.fare) && option.fare > 0,
+  );
+  const durations = options.map((option) => option.durationMinutes).filter((value) => value > 0);
+  const minDuration = durations.length ? Math.min(...durations) : Infinity;
+  const minFare = fareVerified.length
+    ? Math.min(...fareVerified.map((option) => option.fare))
+    : Infinity;
+  const minTransfers = Math.min(...options.map((option) => option.transferCount));
+  const minWalking = Math.min(...options.map((option) => option.walkingDistanceMeters));
 
-  for (const opt of options) {
-    if (opt.durationMinutes < minDuration) minDuration = opt.durationMinutes;
-    if (opt.fare < minFare) minFare = opt.fare;
-    if (opt.transferCount < minTransfers) minTransfers = opt.transferCount;
-    if (opt.walkingDistanceMeters < minWalking) minWalking = opt.walkingDistanceMeters;
-  }
+  const scored = options.map((option) => {
+    // An unavailable fare is neutral, not zero-cost and never a "cheapest" result.
+    let score = option.durationMinutes +
+      (option.fare > 0 ? option.fare * 0.45 : 0) +
+      option.transferCount * 12 +
+      option.walkingDistanceMeters * 0.015;
 
-  // Calculate composite score for each candidate (lower is better)
-  const scored = options.map((opt) => {
-    let composite =
-      opt.durationMinutes * 1.0 +
-      opt.fare * 0.45 +
-      opt.transferCount * 12 +
-      opt.walkingDistanceMeters * 0.015;
-
-    // Preference discount
-    if (preferredMode && preferredMode !== "any" && opt.modes.includes(preferredMode)) {
-      composite -= 15;
+    if (preferredMode && preferredMode !== "any" && option.modes.includes(preferredMode)) {
+      score -= 15;
     }
 
     const highlights: JourneyHighlight[] = [];
-    if (opt.durationMinutes === minDuration) highlights.push("fastest");
-    if (opt.fare === minFare) highlights.push("cheapest");
-    if (opt.transferCount === minTransfers && opt.transferCount === 0)
-      highlights.push("fewest_transfers");
-    if (opt.walkingDistanceMeters === minWalking) highlights.push("least_walking");
+    if (option.durationMinutes > 0 && option.durationMinutes === minDuration) highlights.push("fastest");
+    if (option.fare > 0 && option.fare === minFare) highlights.push("cheapest");
+    if (option.transferCount === minTransfers && option.transferCount === 0) highlights.push("fewest_transfers");
+    if (option.walkingDistanceMeters === minWalking) highlights.push("least_walking");
 
     return {
-      ...opt,
-      compositeScore: Math.round(composite * 10) / 10,
+      ...option,
+      compositeScore: Math.round(score * 10) / 10,
       highlights,
     };
   });
 
-  // Assign best_overall strictly to minimum composite score
-  const minScore = Math.min(...scored.map((o) => o.compositeScore || 9999));
-  for (const opt of scored) {
-    if (opt.compositeScore === minScore && !opt.highlights.includes("best_overall")) {
-      opt.highlights.unshift("best_overall");
+  const minScore = Math.min(...scored.map((option) => option.compositeScore ?? Infinity));
+  for (const option of scored) {
+    if (option.compositeScore === minScore && !option.highlights.includes("best_overall")) {
+      option.highlights.unshift("best_overall");
     }
   }
 
-  // Sort by composite score (best overall first)
-  scored.sort((a, b) => (a.compositeScore || 0) - (b.compositeScore || 0));
-
-  return scored.map((opt, idx) => ({
-    ...opt,
-    optionNumber: idx + 1,
-  }));
+  scored.sort((a, b) => (a.compositeScore ?? Infinity) - (b.compositeScore ?? Infinity));
+  return scored.map((option, index) => ({ ...option, optionNumber: index + 1 }));
 }
 
 /**
@@ -268,6 +265,90 @@ export function calculateJourneyHighlights(
  * 7. Bus + Metro + Suburban Railway
  * 8. Walking connections between modes
  */
+function createYellowLineStationPath(
+  fromName: string,
+  toName: string,
+  travelDate?: string,
+  departureTime?: string,
+): MultimodalJourneyOption | null {
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const stations = YELLOW_LINE_STATIONS;
+  const aliases: Record<string, string> = {
+    poonamali: "Poonamallee Bus Stand",
+    poonamallee: "Poonamallee Bus Stand",
+    punamali: "Poonamallee Bus Stand",
+    punamallee: "Poonamallee Bus Stand",
+    poonamalibypass: "Poonamallee Bypass",
+    poonamalleebypass: "Poonamallee Bypass",
+    vadapalani: "Vadapalani",
+  };
+  const resolveStation = (input: string) => {
+    const key = normalize(input);
+    const aliasName = aliases[key] || input;
+    return stations.find((station) => normalize(station.name) === normalize(aliasName));
+  };
+  const from = resolveStation(fromName);
+  const to = resolveStation(toName);
+  if (!from || !to || from.name === to.name) return null;
+
+  const fromIndex = stations.findIndex((station) => station.name === from.name);
+  const toIndex = stations.findIndex((station) => station.name === to.name);
+  const ordered = fromIndex < toIndex
+    ? stations.slice(fromIndex, toIndex + 1)
+    : stations.slice(toIndex, fromIndex + 1).reverse();
+  const details = getYellowLineTripDetails(ordered[0]!.name, ordered[ordered.length - 1]!.name);
+  if (!details) return null;
+
+  const service = getYellowLineServiceInfo(travelDate, departureTime);
+  const leg: JourneyLeg = {
+    id: "yellow-line-station-sequence",
+    mode: "metro",
+    lineName: "Chennai Metro Yellow Line",
+    routeNumber: "Yellow Line (Corridor 4)",
+    operator: "Chennai Metro Rail Limited",
+    fromStation: details.from.name,
+    toStation: details.to.name,
+    boardStation: details.from.name,
+    alightStation: details.to.name,
+    serviceDirection: details.direction,
+    durationMinutes: details.durationMinutes,
+    stopsCount: details.hopCount,
+    intermediateStops: details.stops.map((station) => ({
+      name: station.name,
+      latitude: station.latitude,
+      longitude: station.longitude,
+    })),
+    color: "#EAB308",
+    instruction: "Board at " + details.from.name + " and alight at " + details.to.name +
+      ". Exact train departure timestamps and fare are unavailable in this dataset.",
+    serviceWindow: service.operatingWindow,
+    serviceFrequency: service.frequencyText,
+    serviceNotice: service.notice,
+  };
+  return {
+    id: "yellow-line-" + details.from.code + "-" + details.to.code,
+    title: "Chennai Metro Yellow Line (" + details.from.name + " → " + details.to.name + ")",
+    description: "Verified Yellow Line station sequence. Exact clock times and fare are unavailable in this source. " + service.frequencyText,
+    durationMinutes: details.durationMinutes,
+    fare: 0,
+    standardFare: null,
+    originStation: details.from.name,
+    destinationStation: details.to.name,
+    transferCount: 0,
+    walkingDistanceMeters: 0,
+    totalStops: details.hopCount,
+    departureTime: "",
+    arrivalTime: "",
+    modes: ["metro"],
+    legs: [leg],
+    highlights: [],
+    fareBreakdown: [],
+    scheduleSource: "Timetable unavailable",
+    isLiveTracking: false,
+  };
+}
+
 export async function planMultimodalJourneys(
   origin: string,
   destination: string,
@@ -276,561 +357,199 @@ export async function planMultimodalJourneys(
   preferredMode?: ModePreference,
   modeConstraint?: ModeConstraint,
 ): Promise<MultimodalJourneyOption[]> {
-  const resolvedOrigin = resolveLocation(origin);
-  const resolvedDest = resolveLocation(destination);
-  const oClean = resolvedOrigin.resolved || origin.trim();
-  const dClean = resolvedDest.resolved || destination.trim();
+  const originRaw = origin.trim();
+  const destinationRaw = destination.trim();
+  if (!originRaw || !destinationRaw) return [];
 
-  // Validate different origin & destination
-  if (
-    !oClean ||
-    !dClean ||
-    oClean.toLowerCase().replace(/\s+/g, "") === dClean.toLowerCase().replace(/\s+/g, "")
-  ) {
-    return [];
+  const options: MultimodalJourneyOption[] = [];
+
+  // Prefer the Yellow Line supplement when both stops belong to its corridor.
+  if (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro") {
+    const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
+    if (yellowPath) options.push(yellowPath);
   }
 
-  // Validate that both origin and destination are recognized locations in Chennai network
-  if (!isRecognizedChennaiStation(oClean) || !isRecognizedChennaiStation(dClean)) {
-    return [];
-  }
-
-  const baseTime = departureTime || "08:30:00";
-  const rawCandidates: MultimodalJourneyOption[] = [];
-
-  // ==========================================
-  // COMBINATION 1: CHENNAI METRO ONLY (DIRECT)
-  // ==========================================
-  try {
-    const { findDirectJourneys } = await import("../gtfs/planner");
-    const directGtfs = await findDirectJourneys(oClean, dClean, travelDate, departureTime);
-    if (directGtfs.length > 0) {
-      const topGtfs = directGtfs[0]!;
-      const stops: JourneyStop[] = topGtfs.stops.map((s) => ({
-        name: s.name,
-        stopId: s.stopId,
-        arrival: s.arrival,
-        departure: s.departure,
-        latitude: s.latitude ?? getStationCoordinates(s.name)?.lat,
-        longitude: s.longitude ?? getStationCoordinates(s.name)?.lon,
-      }));
-
-      const metroFareDetail = calculateMetroFare(oClean, dClean, topGtfs.totalStops);
-      const standardFare = metroFareDetail.standardFare ?? demoFare(topGtfs.totalStops);
-      const digitalFare = metroFareDetail.digitalFare ?? Math.round(standardFare * 0.8);
-
-      const metroLeg: JourneyLeg = {
-        id: `leg-${topGtfs.tripId}`,
-        mode: "metro",
-        lineName: topGtfs.lineName || "Blue Line",
-        routeNumber: "Blue Line",
-        operator: "Chennai Metro (CMRL)",
-        fromStation: oClean,
-        toStation: dClean,
-        boardStation: oClean,
-        alightStation: dClean,
-        serviceDirection: topGtfs.serviceDirection || topGtfs.tripHeadsign || dClean,
-        headsign: topGtfs.tripHeadsign || topGtfs.serviceDirection,
-        departureTime: topGtfs.departure,
-        arrivalTime: topGtfs.arrival,
-        durationMinutes: topGtfs.durationMinutes,
-        stopsCount: topGtfs.totalStops,
-        intermediateStops: stops,
-        standardFare,
-        digitalFare,
-        fareCategory: metroFareDetail.category,
-        discountNote: metroFareDetail.discountNote,
-        color:
-          topGtfs.lineName?.toLowerCase().includes("green") ||
-          topGtfs.routeName?.toLowerCase().includes("central")
-            ? "#16A34A"
-            : "#2563EB",
-        instruction: `Board ${topGtfs.lineName || "Blue Line"} towards ${topGtfs.serviceDirection || topGtfs.tripHeadsign || dClean} at ${oClean}. Alight at ${dClean}.`,
-      };
-
-      rawCandidates.push({
-        id: "option-metro-direct",
-        title: `Chennai Metro (${oClean} → ${dClean})`,
-        description: `Direct high-frequency Metro service from ${oClean} to ${dClean} with zero road traffic delay.`,
-        durationMinutes: topGtfs.durationMinutes,
-        fare: standardFare,
-        standardFare,
-        digitalFare,
-        discountAmount: standardFare - digitalFare,
-        originStation: oClean,
-        destinationStation: dClean,
-        transferCount: 0,
-        walkingDistanceMeters: 60,
-        totalStops: topGtfs.totalStops,
-        departureTime: topGtfs.departure,
-        arrivalTime: topGtfs.arrival,
-        modes: ["metro"],
-        legs: [metroLeg],
-        highlights: [],
-        fareBreakdown: [
-          {
-            mode: "metro",
-            label: `${topGtfs.lineName || "Blue Line"} (Token: ₹${standardFare} · Digital: ₹${digitalFare})`,
-            amount: standardFare,
-          },
-        ],
-        scheduleSource: "Static GTFS schedule",
-        isLiveTracking: false,
-      });
+  // The legacy network graph is used only as a station-path fallback when no
+  // scheduled GTFS service is available. Its sample fare estimates are ignored.
+  const hasGtfsStops = await (async () => {
+    try {
+      const { resolvePlannerStop } = await import("../gtfs/planner");
+      const [from, to] = await Promise.all([
+        resolvePlannerStop(originRaw),
+        resolvePlannerStop(destinationRaw),
+      ]);
+      return Boolean(from.name && to.name);
+    } catch {
+      return false;
     }
-  } catch (err) {
-    console.warn("Direct GTFS lookup caught:", err);
-  }
+  })();
 
-  // ===============================================
-  // COMBINATION 2: CHENNAI METRO (DIRECT & INTERCHANGES)
-  // ===============================================
-  const interchangePlan = planJourney(oClean, dClean);
-  if (interchangePlan) {
-    // 2A: Direct Metro candidate if not already returned by GTFS (e.g. Yellow Line Corridor 4)
-    if (
-      interchangePlan.legs.length === 1 &&
-      !rawCandidates.some((c) => c.modes.length === 1 && c.modes[0] === "metro")
-    ) {
-      const leg = interchangePlan.legs[0]!;
-      const isYellow = leg.lineId === "yellow";
-      const durationMinutes = Math.max(
-        4,
-        Math.round((leg.stops.length - 1) * (isYellow ? 2.2 : 2.0)),
-      );
-      const depTime = baseTime;
-      const arrTime = addMinutesToTime(depTime, durationMinutes);
-
-      const stops: JourneyStop[] = leg.stops.map((s) => ({
-        name: s,
-        latitude: getStationCoordinates(s)?.lat,
-        longitude: getStationCoordinates(s)?.lon,
-      }));
-
-      const metroFareDetail = calculateMetroFare(oClean, dClean, leg.stops.length - 1);
-      const standardFare = metroFareDetail.standardFare ?? demoFare(leg.stops.length - 1);
-      const digitalFare = metroFareDetail.digitalFare ?? Math.round(standardFare * 0.8);
-
-      const metroLeg: JourneyLeg = {
-        id: `leg-${leg.lineId}-direct`,
+  if (!hasGtfsStops && options.length === 0 &&
+      (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
+    const metroPlan = planJourney(originRaw, destinationRaw);
+    if (metroPlan && metroPlan.legs.length > 0) {
+      const legs: JourneyLeg[] = metroPlan.legs.map((leg) => ({
+        id: "metro-graph-" + leg.lineId + "-" + leg.from,
         mode: "metro",
-        lineName: isYellow ? "Chennai Metro Yellow Line" : leg.line,
-        routeNumber: isYellow ? "Yellow Line (Corridor 4)" : leg.line,
-        operator: "Chennai Metro (CMRL)",
-        fromStation: oClean,
-        toStation: dClean,
-        boardStation: oClean,
-        alightStation: dClean,
-        serviceDirection: leg.direction.replace("Towards ", ""),
-        headsign: leg.direction.replace("Towards ", ""),
-        departureTime: depTime,
-        arrivalTime: arrTime,
-        durationMinutes,
-        stopsCount: leg.stops.length - 1,
-        intermediateStops: stops,
-        standardFare,
-        digitalFare,
-        fareCategory: metroFareDetail.category,
-        discountNote: metroFareDetail.discountNote,
-        color: isYellow ? "#EAB308" : leg.lineId === "blue" ? "#2563EB" : "#16A34A",
-        instruction: `Board ${isYellow ? "Yellow Line (Corridor 4)" : leg.line} towards ${leg.direction.replace("Towards ", "")} at ${oClean}. Alight at ${dClean}.`,
-      };
-
-      rawCandidates.push({
-        id: isYellow ? "option-yellow-direct" : "option-metro-direct",
-        title: isYellow
-          ? `Chennai Metro Yellow Line (${oClean} → ${dClean})`
-          : `Chennai Metro (${oClean} → ${dClean})`,
-        description: isYellow
-          ? `Direct passenger service on newly opened Phase 2 Corridor 4 (Poonamallee Bypass ↔ Vadapalani).`
-          : `Direct high-frequency Metro service from ${oClean} to ${dClean}.`,
-        durationMinutes,
-        fare: standardFare,
-        standardFare,
-        digitalFare,
-        discountAmount: standardFare - digitalFare,
-        originStation: oClean,
-        destinationStation: dClean,
-        transferCount: 0,
-        walkingDistanceMeters: 50,
-        totalStops: leg.stops.length - 1,
-        departureTime: depTime,
-        arrivalTime: arrTime,
+        lineName: leg.lineId === "yellow" ? "Chennai Metro Yellow Line" :
+          leg.lineId === "green" ? "Chennai Metro Green Line" : "Chennai Metro Blue Line",
+        operator: "Chennai Metro Rail Limited",
+        fromStation: leg.from,
+        toStation: leg.to,
+        boardStation: leg.from,
+        alightStation: leg.to,
+        serviceDirection: leg.direction,
+        durationMinutes: leg.durationMinutes,
+        stopsCount: leg.stops.length,
+        intermediateStops: leg.stops.map((name) => ({
+          name,
+          latitude: getStationCoordinates(name)?.lat,
+          longitude: getStationCoordinates(name)?.lon,
+        })),
+        color: leg.lineId === "yellow" ? "#EAB308" : leg.lineId === "green" ? "#16A34A" : "#2563EB",
+        instruction: "Board at " + leg.from + " and alight at " + leg.to +
+          ". Station path only: schedule and fare unavailable.",
+      }));
+      options.push({
+        id: "metro-network-" + originRaw + "-" + destinationRaw,
+        title: "Chennai Metro (" + originRaw + " → " + destinationRaw + ")",
+        description: "Station path from the checked-in route graph. Exact timetable and fare are unavailable.",
+        durationMinutes: legs.reduce((sum, leg) => sum + (leg.durationMinutes || 0), 0),
+        fare: 0,
+        standardFare: null,
+        originStation: originRaw,
+        destinationStation: destinationRaw,
+        transferCount: Math.max(0, legs.length - 1),
+        walkingDistanceMeters: 0,
+        totalStops: legs.reduce((sum, leg) => sum + (leg.stopsCount || 0), 0),
+        departureTime: "",
+        arrivalTime: "",
         modes: ["metro"],
-        legs: [metroLeg],
-        highlights: [],
-        fareBreakdown: [
-          {
-            mode: "metro",
-            label: `${isYellow ? "Yellow Line" : leg.line} (Token: ₹${standardFare} · Digital: ₹${digitalFare})`,
-            amount: standardFare,
-          },
-        ],
-        scheduleSource: "Static GTFS schedule",
-        isLiveTracking: false,
-      });
-    }
-
-    // 2B: Metro route with 1 or 2 interchanges (e.g. Yellow to Green at Vadapalani, Green to Blue at Alandur)
-    if (interchangePlan.legs.length >= 2) {
-      const legs: JourneyLeg[] = [];
-      let currentTime = baseTime;
-      let totalWalkMeters = 0;
-      const legModes: TransportMode[] = [];
-
-      interchangePlan.legs.forEach((leg, lIdx) => {
-        const isYellow = leg.lineId === "yellow";
-        const legDuration = Math.max(
-          4,
-          Math.round((leg.stops.length - 1) * (isYellow ? 2.2 : 2.0)),
-        );
-        const depTime = currentTime;
-        const arrTime = addMinutesToTime(depTime, legDuration);
-
-        const legStops: JourneyStop[] = leg.stops.map((s) => ({
-          name: s,
-          latitude: getStationCoordinates(s)?.lat,
-          longitude: getStationCoordinates(s)?.lon,
-        }));
-
-        const legFareDetail = calculateMetroFare(leg.from, leg.to, leg.stops.length - 1);
-
-        legs.push({
-          id: `metro-leg-${lIdx + 1}`,
-          mode: "metro",
-          lineName: isYellow ? "Chennai Metro Yellow Line" : leg.line,
-          routeNumber: isYellow
-            ? "Yellow Line (Corridor 4)"
-            : leg.lineId === "blue"
-              ? "Blue Line"
-              : "Green Line",
-          operator: "Chennai Metro (CMRL)",
-          fromStation: leg.from,
-          toStation: leg.to,
-          boardStation: leg.from,
-          alightStation: leg.to,
-          serviceDirection: leg.direction.replace("Towards ", ""),
-          headsign: leg.direction.replace("Towards ", ""),
-          departureTime: depTime,
-          arrivalTime: arrTime,
-          durationMinutes: legDuration,
-          stopsCount: leg.stops.length - 1,
-          intermediateStops: legStops,
-          standardFare: legFareDetail.standardFare,
-          digitalFare: legFareDetail.digitalFare,
-          fareCategory: legFareDetail.category,
-          discountNote: legFareDetail.discountNote,
-          color: isYellow ? "#EAB308" : leg.lineId === "blue" ? "#2563EB" : "#16A34A",
-          instruction: `Board ${isYellow ? "Yellow Line" : leg.line} towards ${leg.direction.replace("Towards ", "")} at ${leg.from}. Alight at ${leg.to}.`,
-        });
-        legModes.push("metro");
-        currentTime = arrTime;
-
-        // If there's another leg after this one, add an interchange walking transfer
-        if (lIdx < interchangePlan.legs.length - 1) {
-          const nextLeg = interchangePlan.legs[lIdx + 1]!;
-          const transferStation = leg.to;
-          const isVadapalaniTransfer = transferStation.toLowerCase().includes("vadapalani");
-          const walkDist = isVadapalaniTransfer
-            ? 120
-            : transferStation.toLowerCase().includes("alandur")
-              ? 80
-              : 140;
-          const walkDur = isVadapalaniTransfer ? 2 : 3;
-          totalWalkMeters += walkDist;
-
-          const walkDep = currentTime;
-          const walkArr = addMinutesToTime(walkDep, walkDur);
-
-          legs.push({
-            id: `walk-transfer-${lIdx + 1}`,
-            mode: "walk",
-            lineName: isVadapalaniTransfer
-              ? "Concourse Footbridge Interchange"
-              : "Platform Interchange Walkway",
-            operator: "Station Walkway",
-            fromStation: `${transferStation} (${leg.line})`,
-            toStation: `${transferStation} (${nextLeg.line})`,
-            boardStation: transferStation,
-            alightStation: transferStation,
-            serviceDirection: `Transfer to ${nextLeg.line}`,
-            departureTime: walkDep,
-            arrivalTime: walkArr,
-            durationMinutes: walkDur,
-            stopsCount: 0,
-            intermediateStops: [],
-            walkingDistanceMeters: walkDist,
-            walkingDurationMinutes: walkDur,
-            waitingDurationMinutes: isYellow ? 5 : 3,
-            color: "#64748B",
-            instruction: isVadapalaniTransfer
-              ? `Follow signs inside Vadapalani concourse to transfer between Phase 2 Yellow Line and Phase 1 Green Line (~120m walkway).`
-              : `Follow signs inside ${transferStation} station to switch to ${nextLeg.line} platform.`,
-          });
-          legModes.push("walk");
-          currentTime = walkArr;
-        }
-      });
-
-      const totalDuration = Math.round(
-        (toSeconds(legs[legs.length - 1]!.arrivalTime || currentTime) - toSeconds(baseTime)) / 60,
-      );
-
-      const overallFareDetail = calculateMetroFare(oClean, dClean, interchangePlan.totalStops);
-      const standardFare = overallFareDetail.standardFare ?? demoFare(interchangePlan.totalStops);
-      const digitalFare = overallFareDetail.digitalFare ?? Math.round(standardFare * 0.8);
-
-      rawCandidates.push({
-        id: "option-metro-interchange",
-        title: `Chennai Metro (${oClean} → ${dClean} via ${interchangePlan.interchange})`,
-        description: `Metro rail journey with ${interchangePlan.legs.length - 1} seamless interchange${interchangePlan.legs.length > 2 ? "s" : ""} at ${interchangePlan.interchange}.`,
-        durationMinutes: totalDuration,
-        fare: standardFare,
-        standardFare,
-        digitalFare,
-        discountAmount: standardFare - digitalFare,
-        originStation: oClean,
-        destinationStation: dClean,
-        transferCount: interchangePlan.legs.length - 1,
-        walkingDistanceMeters: totalWalkMeters,
-        totalStops: interchangePlan.totalStops,
-        departureTime: baseTime,
-        arrivalTime: legs[legs.length - 1]!.arrivalTime || currentTime,
-        modes: legModes,
         legs,
         highlights: [],
-        fareBreakdown: [
-          {
-            mode: "metro",
-            label: `Chennai Metro Network (Token: ₹${standardFare} · Digital: ₹${digitalFare})`,
-            amount: standardFare,
-          },
-        ],
-        scheduleSource: "Static GTFS schedule",
+        fareBreakdown: [],
+        scheduleSource: "Station graph only; timetable unavailable",
         isLiveTracking: false,
       });
     }
   }
 
-  // ===================================
-  // COMBINATION 3: MTC BUS ONLY (DIRECT)
-  // ===================================
-  const busRouteNumber = getMTCBusRoute(oClean, dClean);
-  const busStops = getMTCIntermediateStops(oClean, dClean);
-  const busDuration = Math.max(16, busStops.length * 4);
-  const busFareDetail = calculateBusFare(oClean, dClean, busRouteNumber, busStops.length);
-  const busFare = busFareDetail.standardFare ?? (busDuration > 30 ? 18 : 12);
-  const busDep = addMinutesToTime(baseTime, 4);
-  const busArr = addMinutesToTime(busDep, busDuration);
+  // Query real scheduled trips independently. If either station is absent
+  // from the loaded GTFS feed, keep any verified Yellow Line option above.
+  try {
+    const { resolvePlannerStop, findDirectJourneys } = await import("../gtfs/planner");
+    const [originMatch, destinationMatch] = await Promise.all([
+      resolvePlannerStop(originRaw),
+      resolvePlannerStop(destinationRaw),
+    ]);
+    if (originMatch.name && destinationMatch.name) {
+      const trips = await findDirectJourneys(
+        originMatch.name,
+        destinationMatch.name,
+        travelDate,
+        departureTime,
+      );
+      for (const trip of trips) {
+        const mode: TransportMode =
+          trip.transportType === "Chennai Metro" ? "metro" :
+          trip.transportType === "MTC Bus" ? "bus" :
+          trip.transportType === "Suburban Train" ? "train" : "walk";
+        if (mode === "walk" || (modeConstraint && modeConstraint !== "none" && mode !== modeConstraint)) continue;
 
-  const walkToBus: JourneyLeg = {
-    id: "walk-to-bus",
-    mode: "walk",
-    lineName: "Walk to Bus Stop",
-    operator: "Pedestrian Walk",
-    fromStation: oClean,
-    toStation: `${oClean} Bus Stop`,
-    boardStation: oClean,
-    alightStation: `${oClean} Bus Stop`,
-    serviceDirection: `Walk to ${oClean} Bus Shelter`,
-    departureTime: baseTime,
-    arrivalTime: busDep,
-    durationMinutes: 4,
-    stopsCount: 0,
-    intermediateStops: [],
-    walkingDistanceMeters: 180,
-    walkingDurationMinutes: 4,
-    color: "#64748B",
-    instruction: `Walk ~180m from ${oClean} to nearest roadside MTC bus shelter.`,
-  };
+        const from = trip.origin || originMatch.name;
+        const to = trip.destination || destinationMatch.name;
+        const label = trip.lineName || trip.routeName || trip.transportType;
+        const routeNumber = trip.routeNumber || undefined;
+        let fare = 0;
+        let standardFare: number | null = null;
+        let digitalFare: number | undefined;
+        try {
+          const fareResult = mode === "metro"
+            ? calculateMetroFare(from, to, trip.totalStops)
+            : mode === "bus"
+              ? calculateBusFare(from, to, routeNumber, trip.totalStops)
+              : calculateTrainFare(from, to, trip.totalStops);
+          if (fareResult.isAvailable && !fareResult.fareUnavailable &&
+              fareResult.standardFare != null && fareResult.standardFare > 0) {
+            standardFare = fareResult.standardFare;
+            fare = standardFare;
+            if (fareResult.digitalFare != null && fareResult.digitalFare > 0) {
+              digitalFare = fareResult.digitalFare;
+            }
+          }
+        } catch (error) {
+          console.warn("Unable to verify trip fare:", error);
+        }
 
-  const busLeg: JourneyLeg = {
-    id: "mtc-bus-leg",
-    mode: "bus",
-    lineName: `MTC Route ${busRouteNumber}`,
-    routeNumber: busRouteNumber,
-    operator: "MTC Bus (Chennai)",
-    fromStation: `${oClean} Bus Stop`,
-    toStation: `${dClean} Bus Stand`,
-    boardStation: `${oClean} Bus Stop`,
-    alightStation: `${dClean} Bus Stand`,
-    serviceDirection: `Towards ${dClean}`,
-    headsign: dClean,
-    departureTime: busDep,
-    arrivalTime: busArr,
-    durationMinutes: busDuration,
-    stopsCount: busStops.length - 1,
-    intermediateStops: busStops,
-    fareRupees: busFare,
-    standardFare: busFare,
-    digitalFare: busFare,
-    fareCategory: busFareDetail.category,
-    discountNote: busFareDetail.discountNote,
-    color: "#FFAA47",
-    instruction: `Board MTC Bus Route ${busRouteNumber} towards ${dClean} at ${oClean} bus bay. Alight at ${dClean} bus stand.`,
-  };
-
-  rawCandidates.push({
-    id: "option-mtc-bus",
-    title: `MTC Bus (Route ${busRouteNumber})`,
-    description: `Direct public bus service connecting ${oClean} and ${dClean} along arterial road corridor.`,
-    durationMinutes: busDuration + 4,
-    fare: busFare,
-    standardFare: busFare,
-    digitalFare: busFare,
-    originStation: oClean,
-    destinationStation: dClean,
-    transferCount: 0,
-    walkingDistanceMeters: 180,
-    totalStops: busStops.length - 1,
-    departureTime: baseTime,
-    arrivalTime: busArr,
-    modes: ["walk", "bus"],
-    legs: [walkToBus, busLeg],
-    highlights: [],
-    fareBreakdown: [
-      {
-        mode: "bus",
-        label: `MTC Route ${busRouteNumber} (${busFareDetail.category})`,
-        amount: busFare,
-      },
-    ],
-    scheduleSource: "Estimated GTFS schedule",
-    isLiveTracking: false,
-  });
-
-  // ================================================
-  // COMBINATION 4: SUBURBAN RAILWAY ONLY (DIRECT EMU)
-  // ================================================
-  if (isSuburbanCorridor(oClean, dClean)) {
-    const trainStops = getSuburbanStops(oClean, dClean);
-    const trainDuration = Math.max(9, (trainStops.length - 1) * 3);
-    const trainFareDetail = calculateTrainFare(oClean, dClean, trainStops.length);
-    const trainFare = trainFareDetail.standardFare ?? (trainStops.length > 8 ? 10 : 5);
-    const trainDep = addMinutesToTime(baseTime, 5);
-    const trainArr = addMinutesToTime(trainDep, trainDuration);
-
-    const walkToTrain: JourneyLeg = {
-      id: "walk-to-train",
-      mode: "walk",
-      lineName: "Walk to Railway Station",
-      operator: "Pedestrian Walk",
-      fromStation: oClean,
-      toStation: `${oClean} Railway Station`,
-      boardStation: oClean,
-      alightStation: `${oClean} Railway Station`,
-      serviceDirection: `Walk to ${oClean} Railway Platform`,
-      departureTime: baseTime,
-      arrivalTime: trainDep,
-      durationMinutes: 5,
-      stopsCount: 0,
-      intermediateStops: [],
-      walkingDistanceMeters: 200,
-      walkingDurationMinutes: 5,
-      color: "#64748B",
-      instruction: `Walk ~200m to Southern Railway ticket counter and suburban platform.`,
-    };
-
-    const trainLeg: JourneyLeg = {
-      id: "sr-train-leg",
-      mode: "train",
-      lineName: "Southern Railway EMU Suburban",
-      routeNumber: "SR-EMU (Beach-Tambaram)",
-      operator: "Southern Railway",
-      fromStation: `${oClean} Railway Station`,
-      toStation: `${dClean} Railway Station`,
-      boardStation: `${oClean} Railway Station`,
-      alightStation: `${dClean} Railway Station`,
-      serviceDirection: `Towards ${dClean}`,
-      headsign: dClean,
-      departureTime: trainDep,
-      arrivalTime: trainArr,
-      durationMinutes: trainDuration,
-      stopsCount: trainStops.length - 1,
-      intermediateStops: trainStops,
-      fareRupees: trainFare,
-      standardFare: trainFare,
-      digitalFare: trainFare,
-      fareCategory: trainFareDetail.category,
-      discountNote: trainFareDetail.discountNote,
-      color: "#A78BFA",
-      instruction: `Board Southern Railway EMU suburban train towards ${dClean} at ${oClean}. Alight at ${dClean}.`,
-    };
-
-    rawCandidates.push({
-      id: "option-suburban-rail",
-      title: "Southern Railway (Suburban EMU)",
-      description:
-        "Fast electric suburban train with dedicated tracks, zero road traffic and low fare.",
-      durationMinutes: trainDuration + 5,
-      fare: trainFare,
-      standardFare: trainFare,
-      digitalFare: trainFare,
-      originStation: oClean,
-      destinationStation: dClean,
-      transferCount: 0,
-      walkingDistanceMeters: 200,
-      totalStops: trainStops.length - 1,
-      departureTime: baseTime,
-      arrivalTime: trainArr,
-      modes: ["walk", "train"],
-      legs: [walkToTrain, trainLeg],
-      highlights: [],
-      fareBreakdown: [
-        { mode: "train", label: "Southern Railway EMU (2nd Class)", amount: trainFare },
-      ],
-      scheduleSource: "Static GTFS schedule",
-      isLiveTracking: false,
-    });
+        const stops: JourneyStop[] = trip.stops.map((stop) => ({
+          name: stop.name,
+          stopId: stop.stopId,
+          arrival: stop.arrival,
+          departure: stop.departure,
+          latitude: stop.latitude ?? getStationCoordinates(stop.name)?.lat,
+          longitude: stop.longitude ?? getStationCoordinates(stop.name)?.lon,
+        }));
+        const leg: JourneyLeg = {
+          id: "gtfs-" + trip.tripId,
+          mode,
+          lineName: label,
+          routeNumber,
+          operator: mode === "metro" ? "Chennai Metro Rail Limited" :
+            mode === "bus" ? "Metropolitan Transport Corporation" : "Southern Railway",
+          fromStation: from,
+          toStation: to,
+          boardStation: from,
+          alightStation: to,
+          serviceDirection: trip.serviceDirection || trip.tripHeadsign || to,
+          headsign: trip.tripHeadsign || undefined,
+          departureTime: trip.departure,
+          arrivalTime: trip.arrival,
+          durationMinutes: trip.durationMinutes,
+          stopsCount: trip.totalStops,
+          intermediateStops: stops,
+          ...(standardFare !== null ? { standardFare, fareRupees: standardFare } : {}),
+          ...(digitalFare !== undefined ? { digitalFare } : {}),
+          color: mode === "metro" ? "#2563EB" : mode === "bus" ? "#FFAA47" : "#A78BFA",
+          instruction: "Board at " + from + " and alight at " + to + ".",
+        };
+        options.push({
+          id: "gtfs-" + trip.tripId,
+          title: label + " (" + from + " → " + to + ")",
+          description: trip.routeName || trip.transportType + " trip from the loaded static GTFS feed.",
+          durationMinutes: trip.durationMinutes,
+          fare,
+          ...(standardFare !== null ? { standardFare } : {}),
+          ...(digitalFare !== undefined ? { digitalFare } : {}),
+          originStation: from,
+          destinationStation: to,
+          transferCount: 0,
+          walkingDistanceMeters: 0,
+          totalStops: trip.totalStops,
+          departureTime: trip.departure,
+          arrivalTime: trip.arrival,
+          modes: [mode],
+          legs: [leg],
+          highlights: [],
+          fareBreakdown: standardFare !== null ? [{ mode, label: label + " fare", amount: standardFare }] : [],
+          scheduleSource: "Static GTFS schedule",
+          isLiveTracking: false,
+        });
+      }
+    }
+  } catch (error) {
+    console.warn("GTFS journey planner failed:", error);
   }
 
-  // ============================================
-  // COMBINATION 5: BUS + METRO (MIXED JOURNEY)
-  // ============================================
-  const busMetroOption = generateBusAndMetroOption(oClean, dClean, baseTime);
-  if (busMetroOption) {
-    rawCandidates.push(busMetroOption);
-  }
-
-  // ====================================================
-  // COMBINATION 6: METRO + SUBURBAN RAIL (MIXED JOURNEY)
-  // ====================================================
-  const metroTrainOption = generateMetroAndSuburbanOption(oClean, dClean, baseTime);
-  if (metroTrainOption) {
-    rawCandidates.push(metroTrainOption);
-  }
-
-  // ==================================================
-  // COMBINATION 7: BUS + SUBURBAN RAIL (MIXED JOURNEY)
-  // ==================================================
-  const busTrainOption = generateBusAndSuburbanOption(oClean, dClean, baseTime);
-  if (busTrainOption) {
-    rawCandidates.push(busTrainOption);
-  }
-
-  // ============================================================
-  // COMBINATION 8: BUS + METRO + SUBURBAN RAIL (3 MODES MIXED)
-  // ============================================================
-  const threeModeOption = generateThreeModeOption(oClean, dClean, baseTime);
-  if (threeModeOption) {
-    rawCandidates.push(threeModeOption);
-  }
-
-  // =====================================
-  // DEDUPLICATION & CONSTRAINT FILTERING
-  // =====================================
-  let filtered = filterUniqueCandidates(rawCandidates);
-
-  if (modeConstraint && modeConstraint !== "none") {
-    filtered = filtered.filter((opt) => opt.modes.includes(modeConstraint));
-  }
-
-  // ====================================
-  // ROUTE RANKING, SCORING & HIGHLIGHTS
-  // ====================================
-  return calculateJourneyHighlights(filtered, preferredMode);
+  const filtered = modeConstraint && modeConstraint !== "none"
+    ? options.filter((option) => option.modes.includes(modeConstraint))
+    : options;
+  const prioritized = preferredMode && preferredMode !== "any"
+    ? [...filtered].sort((a, b) =>
+        Number(!a.modes.includes(preferredMode)) - Number(!b.modes.includes(preferredMode)),
+      )
+    : filtered;
+  return calculateJourneyHighlights(options, preferredMode);
 }
-
 function filterUniqueCandidates(options: MultimodalJourneyOption[]): MultimodalJourneyOption[] {
   const seen = new Set<string>();
   const unique: MultimodalJourneyOption[] = [];
@@ -1783,81 +1502,96 @@ export function getSmartAssistantActionReply(
   activeOptionId: string,
 ): string {
   if (options.length === 0) {
-    return "No route alternatives are currently loaded. Try searching for a journey first.";
+    return "No verified route alternatives are currently available for this origin and destination.";
   }
 
-  const active = options.find((o) => o.id === activeOptionId) || options[0]!;
-  const cheapest = [...options].sort((a, b) => a.fare - b.fare)[0]!;
+  const active = options.find((option) => option.id === activeOptionId) || options[0]!;
+  const fareVerified = options.filter((option) => Number.isFinite(option.fare) && option.fare > 0);
+  const cheapest = fareVerified.length
+    ? [...fareVerified].sort((a, b) => a.fare - b.fare)[0]
+    : undefined;
   const fastest = [...options].sort((a, b) => a.durationMinutes - b.durationMinutes)[0]!;
-  const leastWalking = [...options].sort(
-    (a, b) => a.walkingDistanceMeters - b.walkingDistanceMeters,
-  )[0]!;
-  const direct = options.find((o) => o.transferCount === 0);
-  const metroOpt = options.find((o) => o.modes.includes("metro"));
-  const busOpt = options.find((o) => o.modes.includes("bus"));
+  const direct = options.find((option) => option.transferCount === 0);
+  const metroOpt = options.find((option) => option.modes.includes("metro"));
+  const busOpt = options.find((option) => option.modes.includes("bus"));
   const mixedOpt = options.find(
-    (o) => o.isMixedMode || o.modes.filter((m) => m !== "walk").length > 1,
+    (option) => option.isMixedMode || option.modes.filter((mode) => mode !== "walk").length > 1,
   );
+
+  const fareText = (option: MultimodalJourneyOption) =>
+    option.fare > 0 ? "₹" + option.fare : "fare unavailable";
+  const durationText = (option: MultimodalJourneyOption) =>
+    option.scheduleSource === "Timetable unavailable"
+      ? "approximately " + option.durationMinutes + " minutes (estimated)"
+      : option.durationMinutes + " minutes from the static timetable";
 
   switch (actionId) {
     case "cheaper":
+      if (!cheapest) return "I cannot compare prices because the current route options do not contain verified fares.";
+      if (active.fare <= 0) return "The selected route has no verified fare, so I cannot calculate a saving against it. The lowest verified fare currently available is " + fareText(cheapest) + " for " + cheapest.title + ".";
       if (active.id === cheapest.id) {
-        return `Your current selection (${active.title}) is already the cheapest option at ₹${active.fare}.`;
+        return "Your current selection (" + active.title + ") is already the lowest verified fare at " + fareText(active) + ".";
       }
-      return `Yes! The **${cheapest.title}** costs **₹${cheapest.fare}**, saving you ₹${active.fare - cheapest.fare} compared to ${active.title} (₹${active.fare}). Note: Southern Railway suburban trains (₹5) and MTC ordinary buses provide Chennai's most affordable public transit.`;
+      return "The lowest verified fare is " + fareText(cheapest) + " for " + cheapest.title +
+        ". Your current route fare is " + fareText(active) +
+        ". Confirm the final ticket price with the operator before purchase.";
 
     case "reduce_walking":
-      if (active.walkingDistanceMeters <= leastWalking.walkingDistanceMeters) {
-        return `Your current route has minimal walking (${active.walkingDistanceMeters}m). Station concourses and platforms have direct lift and ramp access.`;
-      }
-      return `To reduce walking, select **${leastWalking.title}** which requires only **${leastWalking.walkingDistanceMeters}m** of walking compared to ${active.walkingDistanceMeters}m on this route.`;
+      return "The current GTFS route results do not contain reliable station-entrance or interchange walking distances. I cannot rank them by walking distance yet.";
 
     case "avoid_changing":
       if (active.transferCount === 0) {
-        return `Great news: **${active.title}** is already a direct service with zero transfers!`;
+        return "Your selected option is a direct service with no transfers.";
       }
       if (direct) {
-        return `To avoid transfers, choose **${direct.title}**. It takes you directly from start to finish with 0 transfers in ~${direct.durationMinutes} mins.`;
+        return "A direct option is available: " + direct.title + ". Its duration is " + durationText(direct) + ".";
       }
-      return `For this corridor, a single transfer provides the fastest transit connection. Follow the clear signage at the interchange concourse.`;
+      return "No verified direct service is present in the loaded timetable for this origin and destination.";
 
     case "fastest":
-      if (active.id === fastest.id) {
-        return `You're looking at the fastest option! **${fastest.title}** reaches your destination in just **${fastest.durationMinutes} minutes**.`;
-      }
-      return `The fastest option is **${fastest.title}**, taking **${fastest.durationMinutes} minutes** (saving ${active.durationMinutes - fastest.durationMinutes} mins over ${active.title}).`;
+      return active.id === fastest.id
+        ? "Your selected option has the shortest calculated duration among the loaded results: " + durationText(fastest) + "."
+        : "The shortest calculated option in the loaded results is " + fastest.title + ", taking " + durationText(fastest) + ".";
 
     case "metro_alternative":
-      if (metroOpt) {
-        const isYellow = metroOpt.legs.some(
-          (l) =>
-            l.lineName?.toLowerCase().includes("yellow") ||
-            l.routeNumber?.toLowerCase().includes("yellow"),
+      if (!metroOpt) return "No verified Metro journey was found in the loaded route data for this origin and destination.";
+      {
+        const yellowLeg = metroOpt.legs.find((leg) =>
+          leg.lineName.toLowerCase().includes("yellow") || leg.routeNumber?.toLowerCase().includes("yellow"),
         );
-        if (isYellow) {
-          return `The Metro option is **${metroOpt.title}** (${metroOpt.durationMinutes} mins, ₹${metroOpt.fare}). Powered by the newly opened Phase 2 Yellow Line (Corridor 4: Poonamallee Bypass ↔ Vadapalani), running 06:00–21:00 with 10-minute peak headway and an integrated interchange to the Green Line at Vadapalani.`;
-        }
-        return `The Metro option is **${metroOpt.title}** (${metroOpt.durationMinutes} mins, ₹${metroOpt.fare}). Chennai Metro runs on dedicated elevated/underground grade, immune to road traffic jams on GST Road and Anna Salai.`;
+        const service = yellowLeg?.serviceFrequency
+          ? " Published Yellow Line frequency: " + yellowLeg.serviceFrequency
+          : "";
+        return "Metro option: " + metroOpt.title + ". Duration: " + durationText(metroOpt) +
+          ". Fare: " + fareText(metroOpt) + "." + service +
+          (metroOpt.scheduleSource === "Timetable unavailable"
+            ? " Exact station-level departures are not present in the loaded Yellow Line data."
+            : " Departure times are scheduled GTFS times, not live tracking.");
       }
-      return "Chennai Metro connects major hubs along the Blue, Green, and newly opened Phase 2 Yellow lines. Look for the nearest Metro station entrance.";
 
     case "bus_alternative":
-      if (busOpt) {
-        return `The Bus option is **${busOpt.title}** (~${busOpt.durationMinutes} mins, ₹${busOpt.fare}). MTC buses serve broad arterial roadside stops throughout the city.`;
-      }
-      return "MTC city buses operate along Chennai's primary arterial corridors with frequent services.";
+      return busOpt
+        ? "Verified bus option: " + busOpt.title + ". Duration: " + durationText(busOpt) +
+          ". Fare: " + fareText(busOpt) + "."
+        : "No direct MTC bus trip between these stops was found in the currently loaded GTFS trips. This does not prove that no bus route exists; the feed may be incomplete.";
 
     case "mixed_alternative":
-      if (mixedOpt) {
-        return `The multimodal option is **${mixedOpt.title}** (~${mixedOpt.durationMinutes} mins, ₹${mixedOpt.fare}). It combines different transit modes to balance speed and coverage.`;
-      }
-      return "Multimodal connections combine bus feeders with fast rail corridors for optimized city travel.";
+      return mixedOpt
+        ? "A verified mixed-mode option is available: " + mixedOpt.title +
+          ". Duration: " + durationText(mixedOpt) + ". Fare: " + fareText(mixedOpt) + "."
+        : "The current planner has not found a fully validated multi-leg transfer journey for this pair. It will not invent connecting buses, stops or interchange times.";
 
-    case "compare_all":
-      return `Comparing all ${options.length} options: **Fastest** is ${fastest.title} (${fastest.durationMinutes}m), **Cheapest** is ${cheapest.title} (₹${cheapest.fare}), and **Fewest Transfers** has ${direct ? "0 transfers" : "1 transfer"}.`;
+    case "compare_all": {
+      const cheapestText = cheapest
+        ? "Lowest verified fare: " + cheapest.title + " (" + fareText(cheapest) + ")."
+        : "No verified fares are available for comparison.";
+      return "Comparing " + options.length + " loaded option(s). Shortest calculated duration: " +
+        fastest.title + " (" + durationText(fastest) + "). " + cheapestText +
+        (direct ? " A direct option is available." : " No direct option is currently loaded.");
+    }
 
     case "miss_bus":
-      return `If you miss this service, Metro trains operate with **5 to 8 minute headway** during peak hours (10 mins non-peak). MTC buses run every **10 to 15 minutes**, and Southern Railway EMUs operate every **10 to 20 minutes**. Your next service is scheduled shortly.`;
+      return "I cannot confirm a live vehicle position or predict a replacement arrival. Check the scheduled departure times shown in the route details and verify current service status with the operator.";
 
     default:
       return "How else can I help optimize your Chennai transit journey?";

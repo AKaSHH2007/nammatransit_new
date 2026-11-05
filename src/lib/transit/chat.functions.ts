@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { respond, type Context, type JourneySchedule, type Card } from "./engine";
 import { planMultimodalJourneys } from "./multimodal-planner";
+import { extractAndResolveLocations } from "./location-resolver";
 import { extractTravelDate, extractDepartureTime, extractModePreferences } from "./datetime-utils";
 
 export { extractTravelDate, extractDepartureTime, extractModePreferences };
@@ -29,18 +30,93 @@ export const sendChat = createServerFn({ method: "POST" })
   )
   .handler(async ({ data }) => {
     const context = data.context as Context;
-    const detectedDate = extractTravelDate(data.message);
-    const departureAfter = extractDepartureTime(data.message);
+    // Resolve "today"/"tomorrow" and default departure filtering in Chennai local time.
+    const now = new Date();
+    const parts = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(now);
+    const part = (type: string) => parts.find((item) => item.type === type)?.value || "";
+    const chennaiDate = part("year") + "-" + part("month") + "-" + part("day");
+    const chennaiMidday = new Date(chennaiDate + "T12:00:00.000Z");
+    const chennaiClockParts = new Intl.DateTimeFormat("en-GB", {
+      timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23",
+    }).formatToParts(now);
+    const clockPart = (type: string) => chennaiClockParts.find((item) => item.type === type)?.value || "00";
+    const chennaiTime = clockPart("hour") + ":" + clockPart("minute") + ":" + clockPart("second");
+    const detectedDate = extractTravelDate(data.message, chennaiMidday);
+    const requestedTime = extractDepartureTime(data.message);
     const { preferredMode, modeConstraint } = extractModePreferences(data.message);
 
     const activeContext: Context = {
       ...context,
-      travelDate: detectedDate || context.travelDate,
+      // Use today's Chennai service calendar by default, rather than all trips in the feed.
+      travelDate: detectedDate || context.travelDate || chennaiDate,
+    };
+    const departureAfter =
+      requestedTime || (activeContext.travelDate === chennaiDate ? chennaiTime : undefined);
+
+    let localReply = respond(data.message, activeContext);
+
+    // If the curated alias resolver does not know a place, fall back to the
+    // complete GTFS stops table. This allows valid stops outside the small
+    // hand-maintained station list to be recognized without inventing names.
+    const locationSlots = extractAndResolveLocations(data.message);
+    let dynamicOrigin: string | undefined;
+    let dynamicDestination: string | undefined;
+    let originAlternatives: string[] = [];
+    let destinationAlternatives: string[] = [];
+
+    const resolveFromFeed = async (slot: typeof locationSlots.origin) => {
+      if (!slot?.input) return undefined;
+      if (slot.isAmbiguous && slot.ambiguousCandidates?.length) {
+        return { candidates: slot.ambiguousCandidates };
+      }
+      if (slot.resolved) return { name: slot.resolved };
+      const { resolvePlannerStop } = await import("../gtfs/planner");
+      const match = await resolvePlannerStop(slot.input);
+      if (!match.name && match.candidates.length > 1) return { candidates: match.candidates };
+      return match.name ? { name: match.name } : undefined;
     };
 
-    const localReply = respond(data.message, activeContext);
+    try {
+      const [feedOrigin, feedDestination] = await Promise.all([
+        resolveFromFeed(locationSlots.origin),
+        resolveFromFeed(locationSlots.destination),
+      ]);
+      if (feedOrigin && "candidates" in feedOrigin) originAlternatives = feedOrigin.candidates;
+      else if (feedOrigin?.name) dynamicOrigin = feedOrigin.name;
+      if (feedDestination && "candidates" in feedDestination) destinationAlternatives = feedDestination.candidates;
+      else if (feedDestination?.name) dynamicDestination = feedDestination.name;
+    } catch (error) {
+      console.warn("Dynamic GTFS stop resolution failed:", error);
+    }
 
-    // Identify origin, destination, and travel date
+    if (originAlternatives.length || destinationAlternatives.length) {
+      const candidates = originAlternatives.length ? originAlternatives : destinationAlternatives;
+      localReply = {
+        reply: "I found more than one matching stop. Please choose one: " + candidates.join(", ") + ".",
+        cards: [],
+        suggestions: candidates,
+        context: { ...localReply.context, grievance: undefined },
+      };
+    } else if (dynamicOrigin || dynamicDestination) {
+      const resolvedOrigin = dynamicOrigin || localReply.context.origin;
+      const resolvedDestination = dynamicDestination || localReply.context.destination;
+      localReply.context = {
+        ...localReply.context,
+        origin: resolvedOrigin,
+        destination: resolvedDestination,
+        grievance: undefined,
+      };
+      if (resolvedOrigin && resolvedDestination &&
+          !localReply.cards.some((card) => card.kind === "journey")) {
+        localReply.reply = "I matched " + resolvedOrigin + " → " + resolvedDestination +
+          " against the Chennai GTFS stop list. Checking available scheduled services.";
+      }
+    }
+
+    // Identify origin, destination, and travel date after dynamic resolution.
     const origin = localReply.context.origin;
     const destination = localReply.context.destination;
     const travelDate = localReply.context.travelDate;
@@ -49,6 +125,13 @@ export const sendChat = createServerFn({ method: "POST" })
     let gtfsJourneys: Array<{
       routeId: string;
       routeName: string;
+      routeNumber?: string;
+      lineName?: string;
+      serviceDirection?: string;
+      tripHeadsign?: string;
+      transportType?: string;
+      origin?: string;
+      destination?: string;
       tripId: string;
       departure: string;
       arrival: string;
@@ -67,21 +150,18 @@ export const sendChat = createServerFn({ method: "POST" })
       try {
         const { findDirectJourneys } = await import("../gtfs/planner");
         gtfsJourneys = await findDirectJourneys(origin, destination, travelDate, departureAfter);
-        if (gtfsJourneys.length === 0 && travelDate) {
-          // If specific date schedule is inactive, look for unconstrained general schedule
-          const unconstrained = await findDirectJourneys(
-            origin,
-            destination,
-            undefined,
-            departureAfter,
-          );
-          if (unconstrained.length > 0) {
-            gtfsJourneys = unconstrained;
-          }
-        }
       } catch (error) {
         console.warn("GTFS planner lookup error:", error);
       }
+    }
+
+    // Respect an explicit mode-only request in both the displayed options and
+    // the timetable text; never attach an unrelated Metro schedule to a Bus query.
+    if (modeConstraint && modeConstraint !== "none") {
+      const allowedType =
+        modeConstraint === "metro" ? "Chennai Metro" :
+        modeConstraint === "bus" ? "MTC Bus" : "Suburban Train";
+      gtfsJourneys = gtfsJourneys.filter((journey) => journey.transportType === allowedType);
     }
 
     // Plan multimodal options (Metro, Bus, Suburban Train, walking transfers)
@@ -103,38 +183,93 @@ export const sendChat = createServerFn({ method: "POST" })
 
     if (gtfsJourneys.length > 0 || multimodalOptions.length > 0) {
       const firstJourney = gtfsJourneys[0];
+      const firstOption = multimodalOptions[0];
       const scheduleInfo: JourneySchedule = {
-        departures: gtfsJourneys.map((j) => j.departure),
-        durationMinutes:
-          firstJourney?.durationMinutes || multimodalOptions[0]?.durationMinutes || 15,
+        departures: gtfsJourneys.map((journey) => journey.departure),
+        durationMinutes: firstJourney?.durationMinutes || firstOption?.durationMinutes || 0,
         serviceDate: travelDate || undefined,
-        source: "Static GTFS schedule",
+        source: gtfsJourneys.length > 0
+          ? "Static GTFS schedule"
+          : firstOption?.scheduleSource || "Timetable unavailable",
       };
 
-      // Enrich journey card if exists
-      localReply.cards = localReply.cards.map((card) => {
-        if (card.kind === "journey") {
-          return {
-            ...card,
-            journey: {
-              ...card.journey,
-              schedule: scheduleInfo,
-              multimodalOptions: multimodalOptions.length > 0 ? multimodalOptions : undefined,
-            },
-          };
-        }
-        return card;
-      });
-
-      // Update baseline response text with grounded GTFS schedule details
-      const departures = gtfsJourneys
-        .slice(0, 3)
-        .map((j) => j.departure)
-        .join(", ");
-      const scheduleNote = `\n\nScheduled GTFS departures${travelDate ? ` for ${travelDate}` : ""}: ${departures || "every 6-8 mins"} (~${scheduleInfo.durationMinutes} mins duration, ${cardStops(localReply.cards)} stops).\n(Note: Schedules are static GTFS data, not live vehicle tracking.)`;
-      if (!localReply.reply.includes("Scheduled GTFS departures")) {
-        localReply.reply += scheduleNote;
+      const journeyCardIndex = localReply.cards.findIndex((card) => card.kind === "journey");
+      if (journeyCardIndex >= 0) {
+        localReply.cards = localReply.cards.map((card) =>
+          card.kind === "journey"
+            ? {
+                ...card,
+                journey: {
+                  ...card.journey,
+                  schedule: scheduleInfo,
+                  multimodalOptions: multimodalOptions.length > 0 ? multimodalOptions : undefined,
+                },
+              }
+            : card,
+        );
+      } else if (firstOption && origin && destination) {
+        const newJourneyCard: Card = {
+          kind: "journey",
+          journey: {
+            origin: firstOption.originStation || origin,
+            destination: firstOption.destinationStation || destination,
+            mode: firstOption.modes.join(" + "),
+            legs: firstOption.legs.map((leg) => ({
+              line: leg.lineName,
+              lineId: leg.lineName.toLowerCase().includes("yellow") ? "yellow" : "blue",
+              from: leg.fromStation,
+              to: leg.toStation,
+              direction: leg.serviceDirection || leg.toStation,
+              stops: leg.intermediateStops.map((stop) => stop.name),
+            })),
+            totalStops: firstOption.totalStops,
+            schedule: scheduleInfo,
+            multimodalOptions,
+          },
+        };
+        localReply.cards.push(newJourneyCard);
       }
+
+      if (gtfsJourneys.length > 0) {
+        const departures = gtfsJourneys.slice(0, 5).map((journey) => journey.departure).join(", ");
+        localReply.reply +=
+          "\n\nScheduled departures from the GTFS feed" +
+          (travelDate ? " for " + travelDate : "") +
+          ": " + departures +
+          ". These are scheduled times, not live vehicle positions.";
+      } else if (firstOption) {
+        localReply.reply +=
+          "\n\n" + (firstOption.scheduleSource || "Published service-frequency guidance") +
+          ". Exact departure timestamps are included only when present in the source feed; live tracking is not claimed.";
+      }
+    } else if (origin && destination) {
+      // The local Metro prototype may know a station path even when there is
+      // no matching scheduled trip. Do not display that path as a confirmed
+      // service when the selected date/time has no verified timetable result.
+      localReply.cards = localReply.cards.filter((card) => card.kind !== "journey");
+      localReply.context = { ...localReply.context, origin, destination };
+      const requestedModeName =
+        modeConstraint === "metro" ? "Metro" :
+        modeConstraint === "bus" ? "MTC bus" :
+        modeConstraint === "train" ? "suburban train" : "direct transit";
+      localReply.reply =
+        "I couldn't find a verified " + requestedModeName + " departure for " + origin + " → " + destination +
+        (travelDate ? " on " + travelDate : "") +
+        " in the loaded timetable data. This does not prove the route does not exist; the feed may be incomplete or out of date. No departure time or live arrival has been invented.";
+    }
+    // Do not let a generative response rewrite factual transport results,
+    // grievance drafts, fares or timetable data.
+    const hasStructuredTransitResult = localReply.cards.some((card) =>
+      card.kind === "journey" || card.kind === "fare" || card.kind === "grievance" ||
+      card.kind === "facility" || card.kind === "alerts",
+    );
+    const currentTurnIsTransitFollowUp =
+      /\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|departure|depart|arrival|timetable|schedule|transfer|platform|station|how long|how much|reach)\b/i.test(data.message);
+
+    // Do not suppress Gemini for unrelated questions merely because this
+    // conversation previously planned a journey.
+    if (hasStructuredTransitResult || ((origin && destination) && currentTurnIsTransitFollowUp)) {
+      return localReply;
     }
 
     const apiKey = process.env.GEMINI_API_KEY;
@@ -233,11 +368,6 @@ RESPONSE STYLE:
       };
     }
   });
-
-function cardStops(cards: Card[]): number {
-  const j = cards.find((c) => c.kind === "journey");
-  return j && j.kind === "journey" ? j.journey.totalStops : 4;
-}
 
 export const getMultimodalJourneys = createServerFn({ method: "POST" })
   .validator((d: unknown) =>

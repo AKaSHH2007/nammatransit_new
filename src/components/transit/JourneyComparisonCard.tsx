@@ -146,10 +146,12 @@ export function JourneyComparisonCard({
 
         <div className="text-right shrink-0">
           <div className="font-display text-xl font-bold tracking-tight text-foreground font-mono tabular-nums">
-            {option.durationMinutes}{" "}
-            <span className="text-xs font-medium text-muted-foreground">min</span>
+            {option.scheduleSource === "Timetable unavailable" ? "~" + option.durationMinutes : option.durationMinutes}{" "}
+            <span className="text-xs font-medium text-muted-foreground">
+              {option.scheduleSource === "Timetable unavailable" ? "min est." : "min"}
+            </span>
           </div>
-          <div className="text-xs font-bold text-accent font-mono tabular-nums">₹{option.fare}</div>
+          <div className="text-xs font-bold text-accent font-mono tabular-nums">{option.fare > 0 ? "₹" + option.fare : "Fare unavailable"}</div>
           {option.digitalFare && option.digitalFare < option.fare && (
             <div className="text-[10px] font-mono text-emerald-400">
               ₹{option.digitalFare} digital
@@ -224,7 +226,7 @@ export function JourneyComparisonCard({
           Chennai One Ready
         </span>
         <span className="text-[10px] text-muted-foreground/80 font-mono">
-          Departs ~{option.departureTime.slice(0, 5)}
+          {option.departureTime ? "Departs " + option.departureTime.slice(0, 5) : "Timetable unavailable"}
         </span>
       </div>
     </div>
