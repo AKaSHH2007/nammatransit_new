@@ -576,7 +576,7 @@ export function extractAndResolveLocations(text: string): {
   const toMatch = input.match(/\b(?:to|reach|towards|till|going\s+to|heading\s+to)\s+(.+?)\s*$/i);
   if (toMatch?.[1]) return { destination: resolveLocation(cleanEndpoint(toMatch[1])) };
 
-  const fromMatch = input.match(/\b(?:from|starting\s+at|start\s+from|board\s+at)\s+(.+?)\s*$/i);
+  const fromMatch = input.match(/\b(?:from|starting\s+from|starting\s+at|start\s+from|start\s+at|board\s+at)\s+(.+?)\s*$/i);
   if (fromMatch?.[1]) return { origin: resolveLocation(cleanEndpoint(fromMatch[1])) };
 
   return {};
