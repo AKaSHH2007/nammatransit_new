@@ -3,6 +3,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { z } from "zod";
 import { respond, type Context, type JourneySchedule, type Card } from "./engine";
 import { planMultimodalJourneys } from "./multimodal-planner";
+import { extractAndResolveLocations } from "./location-resolver";
 import { extractTravelDate, extractDepartureTime, extractModePreferences } from "./datetime-utils";
 
 export { extractTravelDate, extractDepartureTime, extractModePreferences };
@@ -55,9 +56,64 @@ export const sendChat = createServerFn({ method: "POST" })
     const departureAfter =
       requestedTime || (activeContext.travelDate === chennaiDate ? chennaiTime : undefined);
 
-    const localReply = respond(data.message, activeContext);
+    let localReply = respond(data.message, activeContext);
 
-    // Identify origin, destination, and travel date
+    // If the curated alias resolver does not know a place, fall back to the
+    // complete GTFS stops table. This allows valid stops outside the small
+    // hand-maintained station list to be recognized without inventing names.
+    const locationSlots = extractAndResolveLocations(data.message);
+    let dynamicOrigin: string | undefined;
+    let dynamicDestination: string | undefined;
+    let originAlternatives: string[] = [];
+    let destinationAlternatives: string[] = [];
+
+    const resolveFromFeed = async (slot: typeof locationSlots.origin) => {
+      if (!slot?.input) return undefined;
+      if (slot.resolved) return slot.resolved;
+      const { resolvePlannerStop } = await import("../gtfs/planner");
+      const match = await resolvePlannerStop(slot.input);
+      if (!match.name && match.candidates.length > 1) return { candidates: match.candidates };
+      return match.name ? { name: match.name } : undefined;
+    };
+
+    try {
+      const [feedOrigin, feedDestination] = await Promise.all([
+        resolveFromFeed(locationSlots.origin),
+        resolveFromFeed(locationSlots.destination),
+      ]);
+      if (feedOrigin && "candidates" in feedOrigin) originAlternatives = feedOrigin.candidates;
+      else if (feedOrigin?.name) dynamicOrigin = feedOrigin.name;
+      if (feedDestination && "candidates" in feedDestination) destinationAlternatives = feedDestination.candidates;
+      else if (feedDestination?.name) dynamicDestination = feedDestination.name;
+    } catch (error) {
+      console.warn("Dynamic GTFS stop resolution failed:", error);
+    }
+
+    if (originAlternatives.length || destinationAlternatives.length) {
+      const candidates = originAlternatives.length ? originAlternatives : destinationAlternatives;
+      localReply = {
+        reply: "I found more than one matching stop. Please choose one: " + candidates.join(", ") + ".",
+        cards: [],
+        suggestions: candidates,
+        context: { ...localReply.context, grievance: undefined },
+      };
+    } else if (dynamicOrigin || dynamicDestination) {
+      const resolvedOrigin = dynamicOrigin || localReply.context.origin;
+      const resolvedDestination = dynamicDestination || localReply.context.destination;
+      localReply.context = {
+        ...localReply.context,
+        origin: resolvedOrigin,
+        destination: resolvedDestination,
+        grievance: undefined,
+      };
+      if (resolvedOrigin && resolvedDestination &&
+          !localReply.cards.some((card) => card.kind === "journey")) {
+        localReply.reply = "I matched " + resolvedOrigin + " → " + resolvedDestination +
+          " against the Chennai GTFS stop list. Checking available scheduled services.";
+      }
+    }
+
+    // Identify origin, destination, and travel date after dynamic resolution.
     const origin = localReply.context.origin;
     const destination = localReply.context.destination;
     const travelDate = localReply.context.travelDate;
