@@ -130,15 +130,15 @@ const COMMON_ALIASES: Record<string, string> = {
   "t nagar bus terminus": "T. Nagar",
 
   // Poonamallee variations
-  poonamali: "Poonamallee",
-  poonamalle: "Poonamallee",
-  poonamallee: "Poonamallee",
-  punamallee: "Poonamallee",
-  punamali: "Poonamallee",
-  poonamally: "Poonamallee",
+  poonamali: "Poonamallee Bus Stand",
+  poonamalle: "Poonamallee Bus Stand",
+  poonamallee: "Poonamallee Bus Stand",
+  punamallee: "Poonamallee Bus Stand",
+  punamali: "Poonamallee Bus Stand",
+  poonamally: "Poonamallee Bus Stand",
   "poonamallee bypass": "Poonamallee Bypass",
   "poonamali bypass": "Poonamallee Bypass",
-  "poonamalle bus stand": "Poonamallee",
+  "poonamalle bus stand": "Poonamallee Bus Stand",
 
   // Vadapalani variations
   vadapalani: "Vadapalani",
