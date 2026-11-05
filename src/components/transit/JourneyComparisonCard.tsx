@@ -224,7 +224,7 @@ export function JourneyComparisonCard({
           Chennai One Ready
         </span>
         <span className="text-[10px] text-muted-foreground/80 font-mono">
-          Departs ~{option.departureTime.slice(0, 5)}
+          {option.departureTime ? "Departs " + option.departureTime.slice(0, 5) : "Timetable unavailable"}
         </span>
       </div>
     </div>
