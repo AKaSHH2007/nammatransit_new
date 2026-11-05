@@ -119,7 +119,7 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
           <Ticket className="h-3.5 w-3.5 text-[#00D6A3]" />
           <span>Chennai One:</span>
           <span className="font-semibold text-white font-mono">
-            ₹{option.digitalFare ?? Math.round(option.fare * 0.8)}
+            {option.digitalFare && option.digitalFare > 0 ? "₹" + option.digitalFare : "Fare unavailable"}
           </span>
           {option.discountAmount && option.discountAmount > 0 ? (
             <span className="rounded bg-[#00D6A3]/20 px-1 py-0.2 text-[10px] font-bold text-[#00D6A3]">
@@ -186,8 +186,7 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
         <div className="mt-3 flex items-center gap-2 rounded-xl bg-[#00D6A3]/10 border border-[#00D6A3]/25 px-3 py-2 text-xs text-[#00D6A3]">
           <Sparkles className="h-4 w-4 shrink-0" />
           <span>
-            <b>20% Flat Discount</b> automatically applies to all Chennai Metro QR & Smart Card
-            tickets booked via Chennai One.
+            Check the current QR-ticket or Smart Card discount displayed in Chennai One before payment. The discount depends on the applicable ticket rules.
           </span>
         </div>
       )}
@@ -215,10 +214,16 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
                   <span>{leg.lineName}</span>
                   <span>·</span>
                   <span className="font-mono text-white">
-                    ₹{leg.digitalFare ?? leg.standardFare ?? (leg.fareRupees || 10)}
+                    {leg.digitalFare && leg.digitalFare > 0
+                      ? "₹" + leg.digitalFare
+                      : leg.standardFare && leg.standardFare > 0
+                        ? "₹" + leg.standardFare
+                        : leg.fareRupees && leg.fareRupees > 0
+                          ? "₹" + leg.fareRupees
+                          : "Fare unavailable"}
                   </span>
-                  {leg.mode === "metro" && (
-                    <span className="text-[#00D6A3] font-medium">(20% off token)</span>
+                  {leg.digitalFare && leg.standardFare && leg.digitalFare < leg.standardFare && (
+                    <span className="text-[#00D6A3] font-medium">(digital discount)</span>
                   )}
                 </div>
               </div>
