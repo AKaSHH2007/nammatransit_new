@@ -54,12 +54,21 @@ type Msg = {
 };
 
 type Saved = {
+  id: string;
+  title: string;
+  updatedAt: number;
   messages: Msg[];
   context: Context;
   suggestions: string[];
 };
 
-const KEY = "nammatransit-conversation";
+type ConversationStore = {
+  activeId: string;
+  conversations: Saved[];
+};
+
+const STORE_KEY = "nammatransit-conversations-v2";
+const LEGACY_KEY = "nammatransit-conversation";
 
 const WELCOME: Msg = {
   id: "w",
@@ -69,7 +78,7 @@ const WELCOME: Msg = {
 
 const START_CHIPS = [
   "Guindy to Chennai Airport",
-  "Koyeembedu to Chennai Airport",
+  "Koyambedu to Chennai Airport",
   "Poonamali to Vadapalani",
   "Tambaram to Guindy",
   "What is the fare for Guindy to Airport?",
@@ -116,7 +125,12 @@ function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [conversationId, setConversationId] = useState("initial");
+  const [savedConversations, setSavedConversations] = useState<Saved[]>([]);
 
+  const activeConversationIdRef = useRef("initial");
+  const requestVersionRef = useRef(0);
+  const hydratedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -137,75 +151,103 @@ function ChatPage() {
   };
 
   useEffect(() => {
+    let store: ConversationStore | null = null;
     try {
-      const saved = JSON.parse(localStorage.getItem(KEY) || "null") as Saved | null;
-
-      if (saved?.messages?.length) {
-        setMessages(saved.messages);
-        setContext(saved.context ?? {});
-        setSuggestions(saved.suggestions ?? START_CHIPS);
-      }
+      store = JSON.parse(localStorage.getItem(STORE_KEY) || "null") as ConversationStore | null;
     } catch {
-      // Ignore invalid saved conversation
+      store = null;
     }
 
+    if (store?.conversations?.length) {
+      const active = store.conversations.find((item) => item.id === store?.activeId) || store.conversations[0]!;
+      activeConversationIdRef.current = active.id;
+      setConversationId(active.id);
+      setSavedConversations(store.conversations);
+      setMessages(active.messages?.length ? active.messages : [WELCOME]);
+      setContext(active.context ?? {});
+      setSuggestions(active.suggestions ?? START_CHIPS);
+    } else {
+      // Migrate the previously saved single conversation without discarding it.
+      let legacy: Partial<Saved> | null = null;
+      try {
+        legacy = JSON.parse(localStorage.getItem(LEGACY_KEY) || "null") as Partial<Saved> | null;
+      } catch {
+        legacy = null;
+      }
+      const id = crypto.randomUUID();
+      activeConversationIdRef.current = id;
+      setConversationId(id);
+      if (legacy?.messages?.length) {
+        setMessages(legacy.messages);
+        setContext(legacy.context ?? {});
+        setSuggestions(legacy.suggestions ?? START_CHIPS);
+      }
+    }
+
+    hydratedRef.current = true;
     inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(
-      KEY,
-      JSON.stringify({
-        messages,
-        context,
-        suggestions,
-      } satisfies Saved),
-    );
+    if (!hydratedRef.current) return;
 
+    const firstUserMessage = messages.find((message) => message.role === "user");
+    const title = firstUserMessage?.text.slice(0, 42) || "New conversation";
+    const current: Saved = {
+      id: conversationId,
+      title,
+      updatedAt: Date.now(),
+      messages,
+      context,
+      suggestions,
+    };
+
+    let previous: Saved[] = [];
+    try {
+      const store = JSON.parse(localStorage.getItem(STORE_KEY) || "null") as ConversationStore | null;
+      previous = store?.conversations ?? [];
+    } catch {
+      previous = [];
+    }
+
+    const next = [current, ...previous.filter((item) => item.id !== conversationId)]
+      .sort((a, b) => b.updatedAt - a.updatedAt)
+      .slice(0, 30);
+
+    localStorage.setItem(STORE_KEY, JSON.stringify({ activeId: conversationId, conversations: next }));
+    setSavedConversations(next);
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, context, suggestions]);
+  }, [messages, context, suggestions, conversationId]);
 
   async function send(text: string) {
     const msg = text.trim();
-
     if (!msg || loading) return;
 
+    const conversationAtStart = conversationId;
+    const requestVersion = ++requestVersionRef.current;
     setOpen(false);
     setInput("");
 
-    // Keep the previous conversation for Gemini / rule engine.
     const history = messages
-      .filter((m) => m.id !== "w")
-      .map((m) => ({
-        role: m.role,
-        text: m.text,
-      }))
+      .filter((message) => message.id !== "w")
+      .map((message) => ({ role: message.role, text: message.text }))
       .slice(-16);
 
-    // Display the user's new message.
     setMessages((previous) => [
       ...previous,
-      {
-        id: crypto.randomUUID(),
-        role: "user",
-        text: msg,
-      },
+      { id: crypto.randomUUID(), role: "user", text: msg },
     ]);
-
     setLoading(true);
 
     try {
-      const response = await sendChat({
-        data: {
-          message: msg,
-          context,
-          history,
-        },
-      });
+      const response = await sendChat({ data: { message: msg, context, history } });
+
+      // Ignore late responses from a conversation that is no longer active.
+      if (activeConversationIdRef.current !== conversationAtStart ||
+          requestVersionRef.current !== requestVersion) return;
 
       setContext(response.context);
       setSuggestions(response.suggestions);
-
       setMessages((previous) => [
         ...previous,
         {
@@ -217,7 +259,8 @@ function ChatPage() {
       ]);
     } catch (error) {
       console.error("Chat error:", error);
-
+      if (activeConversationIdRef.current !== conversationAtStart ||
+          requestVersionRef.current !== requestVersion) return;
       setMessages((previous) => [
         ...previous,
         {
@@ -228,18 +271,37 @@ function ChatPage() {
         },
       ]);
     } finally {
-      setLoading(false);
-      inputRef.current?.focus();
+      if (activeConversationIdRef.current === conversationAtStart &&
+          requestVersionRef.current === requestVersion) {
+        setLoading(false);
+        inputRef.current?.focus();
+      }
     }
   }
 
+  function switchConversation(target: Saved) {
+    requestVersionRef.current += 1;
+    activeConversationIdRef.current = target.id;
+    setConversationId(target.id);
+    setMessages(target.messages?.length ? target.messages : [WELCOME]);
+    setContext(target.context ?? {});
+    setSuggestions(target.suggestions ?? START_CHIPS);
+    setLoading(false);
+    setInput("");
+    setOpen(false);
+  }
+
   function reset() {
+    const id = crypto.randomUUID();
+    requestVersionRef.current += 1;
+    activeConversationIdRef.current = id;
+    setConversationId(id);
     setMessages([WELCOME]);
     setContext({});
     setSuggestions(START_CHIPS);
+    setLoading(false);
+    setInput("");
     setOpen(false);
-
-    localStorage.removeItem(KEY);
     inputRef.current?.focus();
   }
 
@@ -302,6 +364,30 @@ function ChatPage() {
             </button>
           ))}
         </nav>
+
+        {savedConversations.length > 0 && (
+          <div className="mt-5 min-h-0 flex-1 overflow-y-auto">
+            <p className="mb-2 px-2 text-[10px] font-bold uppercase tracking-wider text-muted-foreground">
+              Recent conversations
+            </p>
+            <div className="space-y-1">
+              {savedConversations
+                .filter((item) => item.id !== conversationId)
+                .slice(0, 12)
+                .map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => switchConversation(item)}
+                    className="w-full truncate rounded-lg px-3 py-2 text-left text-xs text-sidebar-foreground/75 hover:bg-sidebar-accent hover:text-sidebar-foreground"
+                    title={item.title}
+                  >
+                    {item.title}
+                  </button>
+                ))}
+            </div>
+          </div>
+        )}
 
         {journey && (
           <div className="mt-5 rounded-xl border border-sidebar-border bg-sidebar-accent/40 p-3 text-xs">
