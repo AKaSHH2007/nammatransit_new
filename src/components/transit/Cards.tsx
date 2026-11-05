@@ -114,8 +114,8 @@ export function ResultCard({
             )}
 
             <div className="mt-3 text-xs text-muted-foreground space-y-1">
-              <p>• Source: Official CMRL station-to-station fare matrix (2025/2026)</p>
-              <p>• Applicable across Blue, Green and Yellow lines</p>
+              <p>• Source: CMRL official fare chart (last fare update: 22 February 2021)</p>
+              <p>• This chart covers the stations listed in the published fare matrix; Yellow Line fares are not included</p>
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
