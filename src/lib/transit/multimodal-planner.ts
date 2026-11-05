@@ -409,9 +409,10 @@ export async function planMultimodalJourneys(
   if (!options.some((option) => option.modes.includes("metro")) &&
       (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
     try {
-      const { getYellowLineTripDetails } = await import("./yellow-line.data");
+      const { getYellowLineTripDetails, getYellowLineServiceInfo } = await import("./yellow-line.data");
       const yellow = getYellowLineTripDetails(oClean, dClean);
       if (yellow) {
+        const serviceInfo = getYellowLineServiceInfo(travelDate, departureTime);
         const stops: JourneyStop[] = yellow.stops.map((stop) => ({
           name: stop.name,
           latitude: stop.latitude,
@@ -435,11 +436,14 @@ export async function planMultimodalJourneys(
           instruction: "Board the Yellow Line at " + yellow.from.name +
             " and alight at " + yellow.to.name +
             ". The route sequence is available, but an exact departure timetable and fare are not available in the loaded GTFS/fare data.",
+          serviceWindow: serviceInfo.operatingWindow,
+          serviceFrequency: serviceInfo.frequencyText,
+          serviceNotice: serviceInfo.notice,
         };
         options.push({
           id: "yellow-line-route-no-timetable",
           title: "Chennai Metro Yellow Line (" + yellow.from.name + " → " + yellow.to.name + ")",
-          description: "Verified station sequence. Travel time is an estimate; exact scheduled departure and fare are not available in the loaded data.",
+          description: "Yellow Line station sequence. Travel time is an estimate; exact scheduled departures and fare are not available in the loaded data. Published service-frequency guidance is shown separately.",
           durationMinutes: yellow.durationMinutes,
           fare: 0,
           standardFare: null,
