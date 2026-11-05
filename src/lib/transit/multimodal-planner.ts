@@ -362,9 +362,63 @@ export async function planMultimodalJourneys(
   if (!originRaw || !destinationRaw) return [];
 
   const options: MultimodalJourneyOption[] = [];
-  const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
-  if (yellowPath && (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
-    options.push(yellowPath);
+
+  // Resolve direct Yellow Line journeys using the canonical station list.
+  // Keep Poonamali as a spelling alias for Poonamallee Bus Stand.
+  if (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro") {
+    const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
+    if (yellowPath) options.push(yellowPath);
+  }
+
+  // If the feed does not cover an endpoint, retain a Phase-1/Yellow station
+  // graph route as a topology-only fallback. No timetable or fare is inferred.
+  if (options.length === 0 && (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
+    const metroPlan = planJourney(originRaw, destinationRaw);
+    if (metroPlan && metroPlan.legs.length > 0) {
+      const planLegs: JourneyLeg[] = metroPlan.legs.map((leg) => ({
+        id: "metro-graph-" + leg.lineId + "-" + leg.from,
+        mode: "metro",
+        lineName: leg.lineId === "yellow" ? "Chennai Metro Yellow Line" :
+          leg.lineId === "green" ? "Chennai Metro Green Line" : "Chennai Metro Blue Line",
+        operator: "Chennai Metro Rail Limited",
+        fromStation: leg.from,
+        toStation: leg.to,
+        boardStation: leg.from,
+        alightStation: leg.to,
+        serviceDirection: leg.direction,
+        durationMinutes: Math.max(1, leg.stops.length - 1) * YELLOW_LINE_INTERSTATION_MINUTES,
+        stopsCount: leg.stops.length - 1,
+        intermediateStops: leg.stops.map((name) => ({
+          name,
+          latitude: getStationCoordinates(name)?.lat,
+          longitude: getStationCoordinates(name)?.lon,
+        })),
+        color: leg.lineId === "yellow" ? "#EAB308" : leg.lineId === "green" ? "#16A34A" : "#2563EB",
+        instruction: "Board at " + leg.from + " and alight at " + leg.to +
+          ". This is a station path only; confirm the current operating timetable with CMRL.",
+      }));
+      options.push({
+        id: "metro-network-" + originRaw + "-" + destinationRaw,
+        title: "Chennai Metro (" + originRaw + " → " + destinationRaw + ")",
+        description: "Station/interchange path from the checked-in network graph. Exact timetable and fare are unavailable for this option.",
+        durationMinutes: planLegs.reduce((sum, leg) => sum + (leg.durationMinutes || 0), 0),
+        fare: 0,
+        standardFare: null,
+        originStation: originRaw,
+        destinationStation: destinationRaw,
+        transferCount: Math.max(0, planLegs.length - 1),
+        walkingDistanceMeters: 0,
+        totalStops: planLegs.reduce((sum, leg) => sum + (leg.stopsCount || 0), 0),
+        departureTime: "",
+        arrivalTime: "",
+        modes: ["metro"],
+        legs: planLegs,
+        highlights: [],
+        fareBreakdown: [],
+        scheduleSource: "Station graph only; timetable unavailable",
+        isLiveTracking: false,
+      });
+    }
   }
 
   // Query real scheduled trips independently. If either station is absent
