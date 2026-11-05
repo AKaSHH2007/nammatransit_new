@@ -36,6 +36,9 @@ export type JourneyLeg = {
   discountNote?: string;
   color: string;
   instruction?: string;
+  serviceWindow?: string;
+  serviceFrequency?: string;
+  serviceNotice?: string;
 };
 
 export type JourneyHighlight =
