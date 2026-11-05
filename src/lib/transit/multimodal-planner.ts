@@ -274,12 +274,26 @@ function createYellowLineStationPath(
   const normalize = (value: string) =>
     value.toLowerCase().replace(/[^a-z0-9]/g, "");
   const stations = YELLOW_LINE_STATIONS;
-  const fromKey = normalize(fromName);
-  const toKey = normalize(toName);
-  const fromIndex = stations.findIndex((station) => normalize(station.name) === fromKey);
-  const toIndex = stations.findIndex((station) => normalize(station.name) === toKey);
-  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return null;
+  const aliases: Record<string, string> = {
+    poonamali: "Poonamallee Bus Stand",
+    poonamallee: "Poonamallee Bus Stand",
+    punamali: "Poonamallee Bus Stand",
+    punamallee: "Poonamallee Bus Stand",
+    poonamalibypass: "Poonamallee Bypass",
+    poonamalleebypass: "Poonamallee Bypass",
+    vadapalani: "Vadapalani",
+  };
+  const resolveStation = (input: string) => {
+    const key = normalize(input);
+    const aliasName = aliases[key] || input;
+    return stations.find((station) => normalize(station.name) === normalize(aliasName));
+  };
+  const from = resolveStation(fromName);
+  const to = resolveStation(toName);
+  if (!from || !to || from.name === to.name) return null;
 
+  const fromIndex = stations.findIndex((station) => station.name === from.name);
+  const toIndex = stations.findIndex((station) => station.name === to.name);
   const ordered = fromIndex < toIndex
     ? stations.slice(fromIndex, toIndex + 1)
     : stations.slice(toIndex, fromIndex + 1).reverse();
