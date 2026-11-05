@@ -159,7 +159,8 @@ export const sendChat = createServerFn({ method: "POST" })
         const departures = gtfsJourneys.slice(0, 3).map((journey) => journey.departure).join(", ");
         localReply.reply +=
           "\n\nScheduled departures for " + travelDate + ": " + departures +
-          ". These are static GTFS timetable times, not live vehicle tracking.";
+          ". The next matching trip takes " + firstJourney!.durationMinutes +
+          " minutes. These are static GTFS timetable times, not live vehicle tracking.";
       } else if (multimodalOptions.some((option) => option.scheduleSource === "Timetable unavailable")) {
         localReply.reply +=
           "\n\nThe Yellow Line station route is shown. The currently loaded timetable does not contain verified scheduled departures or an exact fare for this route.";
@@ -168,10 +169,16 @@ export const sendChat = createServerFn({ method: "POST" })
 
     // Do not let a generative response rewrite factual transport results,
     // grievance drafts, fares or timetable data.
-    if (
-      (origin && destination) ||
-      localReply.cards.some((card) => card.kind === "journey" || card.kind === "fare" || card.kind === "grievance")
-    ) {
+    const hasStructuredTransitResult = localReply.cards.some((card) =>
+      card.kind === "journey" || card.kind === "fare" || card.kind === "grievance" ||
+      card.kind === "facility" || card.kind === "alerts",
+    );
+    const currentTurnIsTransitFollowUp =
+      /\\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|departure|depart|arrival|timetable|schedule|transfer|platform|station|how long|how much|reach)\\b/i.test(data.message);
+
+    // Do not suppress Gemini for unrelated questions merely because this
+    // conversation previously planned a journey.
+    if (hasStructuredTransitResult || ((origin && destination) && currentTurnIsTransitFollowUp)) {
       return localReply;
     }
 
