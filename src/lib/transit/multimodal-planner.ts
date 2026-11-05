@@ -204,7 +204,8 @@ export function calculateJourneyHighlights(
   const fareVerified = options.filter((option) =>
     Number.isFinite(option.fare) && option.fare > 0,
   );
-  const minDuration = Math.min(...options.map((option) => option.durationMinutes).filter((n) => n > 0));
+  const durations = options.map((option) => option.durationMinutes).filter((value) => value > 0);
+  const minDuration = durations.length ? Math.min(...durations) : Infinity;
   const minFare = fareVerified.length
     ? Math.min(...fareVerified.map((option) => option.fare))
     : Infinity;
@@ -212,7 +213,7 @@ export function calculateJourneyHighlights(
   const minWalking = Math.min(...options.map((option) => option.walkingDistanceMeters));
 
   const scored = options.map((option) => {
-    // An unavailable fare is neutral, not zero-cost and not a cheapest result.
+    // An unavailable fare is neutral, not zero-cost and never a "cheapest" result.
     let score = option.durationMinutes +
       (option.fare > 0 ? option.fare * 0.45 : 0) +
       option.transferCount * 12 +
