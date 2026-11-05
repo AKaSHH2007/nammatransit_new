@@ -535,60 +535,6 @@ export async function planMultimodalJourneys(
         Number(!a.modes.includes(preferredMode)) - Number(!b.modes.includes(preferredMode)),
       )
     : filtered;
-  // If the static GTFS lookup has no matching trip, the checked-in Phase 1
-  // metro graph can still provide a station-to-station route. It is topology
-  // only: do not infer fares or departure times from this demo route graph.
-  if (options.length === 0 && (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
-    const metroPlan = planJourney(originRaw, destinationRaw);
-    if (metroPlan && metroPlan.legs.length > 0) {
-      const planLegs: JourneyLeg[] = metroPlan.legs.map((leg) => ({
-        id: "metro-graph-" + leg.lineId + "-" + leg.from,
-        mode: "metro",
-        lineName: leg.lineId === "yellow" ? "Chennai Metro Yellow Line" :
-          leg.lineId === "green" ? "Chennai Metro Green Line" : "Chennai Metro Blue Line",
-        operator: "Chennai Metro Rail Limited",
-        fromStation: leg.from,
-        toStation: leg.to,
-        boardStation: leg.from,
-        alightStation: leg.to,
-        serviceDirection: leg.direction,
-        durationMinutes: leg.durationMinutes,
-        stopsCount: leg.stops.length,
-        intermediateStops: leg.stops.map((name) => ({
-          name,
-          latitude: getStationCoordinates(name)?.lat,
-          longitude: getStationCoordinates(name)?.lon,
-        })),
-        color: leg.lineId === "yellow" ? "#EAB308" : leg.lineId === "green" ? "#16A34A" : "#2563EB",
-        instruction: "Board at " + leg.from + " and alight at " + leg.to +
-          ". This is a station-network path; verify service times with CMRL.",
-      }));
-      const durationMinutes = planLegs.reduce((total, leg) => total + (leg.durationMinutes || 0), 0);
-      options.push({
-        id: "metro-network-" + originRaw + "-" + destinationRaw,
-        title: "Chennai Metro (" + originRaw + " → " + destinationRaw + ")",
-        description: "Route based on the checked-in station/interchange graph. Exact schedule and fare are not loaded for this path.",
-        durationMinutes,
-        fare: 0,
-        standardFare: null,
-        originStation: originRaw,
-        destinationStation: destinationRaw,
-        transferCount: Math.max(0, planLegs.length - 1),
-        walkingDistanceMeters: 0,
-        totalStops: planLegs.reduce((total, leg) => total + (leg.stopsCount || 0), 0),
-        departureTime: "",
-        arrivalTime: "",
-        modes: ["metro"],
-        legs: planLegs,
-        highlights: [],
-        fareBreakdown: [],
-        scheduleSource: "Station graph only; timetable unavailable",
-        isLiveTracking: false,
-        isMixedMode: false,
-      });
-    }
-  }
-
   return calculateJourneyHighlights(options, preferredMode);
 }
 function filterUniqueCandidates(options: MultimodalJourneyOption[]): MultimodalJourneyOption[] {
