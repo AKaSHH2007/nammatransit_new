@@ -149,7 +149,7 @@ export function JourneyComparisonCard({
             {option.durationMinutes}{" "}
             <span className="text-xs font-medium text-muted-foreground">min</span>
           </div>
-          <div className="text-xs font-bold text-accent font-mono tabular-nums">₹{option.fare}</div>
+          <div className="text-xs font-bold text-accent font-mono tabular-nums">{option.fare > 0 ? "₹" + option.fare : "Fare unavailable"}</div>
           {option.digitalFare && option.digitalFare < option.fare && (
             <div className="text-[10px] font-mono text-emerald-400">
               ₹{option.digitalFare} digital
