@@ -7,6 +7,11 @@ import {
   calculateJourneyFareSummary,
 } from "./fares";
 import { resolveLocation } from "./location-resolver";
+import {
+  YELLOW_LINE_STATIONS,
+  YELLOW_LINE_INTERSTATION_MINUTES,
+  getYellowLineServiceInfo,
+} from "./yellow-line.data";
 import type {
   JourneyHighlight,
   JourneyLeg,
