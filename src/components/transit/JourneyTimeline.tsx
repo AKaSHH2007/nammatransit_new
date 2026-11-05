@@ -128,7 +128,7 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
 
         <div className="flex items-center gap-2">
           <span className="rounded-full bg-muted/80 px-2.5 py-1 text-[11px] font-medium text-foreground/80 font-mono">
-            Departure: {option.departureTime.slice(0, 5)}
+            {option.departureTime ? "Departure: " + option.departureTime.slice(0, 5) : "Exact scheduled departure unavailable"}
           </span>
         </div>
       </div>
