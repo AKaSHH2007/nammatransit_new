@@ -119,7 +119,11 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
           <Ticket className="h-3.5 w-3.5 text-[#00D6A3]" />
           <span>Chennai One:</span>
           <span className="font-semibold text-white font-mono">
-            {option.digitalFare && option.digitalFare > 0 ? "₹" + option.digitalFare : "Fare unavailable"}
+            {option.digitalFare && option.digitalFare > 0
+              ? "₹" + option.digitalFare
+              : option.fare > 0
+                ? "₹" + option.fare
+                : "Fare unavailable"}
           </span>
           {option.discountAmount && option.discountAmount > 0 ? (
             <span className="rounded bg-[#00D6A3]/20 px-1 py-0.2 text-[10px] font-bold text-[#00D6A3]">
@@ -411,9 +415,15 @@ function BookingGuideModal({
   destinationStation,
   onClose,
 }: BookingGuideModalProps) {
-  const fare = leg
-    ? (leg.digitalFare ?? leg.standardFare ?? leg.fareRupees ?? undefined)
-    : (option.digitalFare ?? (option.fare > 0 ? option.fare : undefined));
+  const legFare = leg
+    ? [leg.digitalFare, leg.standardFare, leg.fareRupees].find(
+        (value): value is number => typeof value === "number" && value > 0,
+      )
+    : undefined;
+  const optionFare = [option.digitalFare, option.fare].find(
+    (value): value is number => typeof value === "number" && value > 0,
+  );
+  const fare = leg ? legFare : optionFare;
 
   const openApp = () => {
     // Use the official portal until a documented app deep link is available.
