@@ -70,26 +70,11 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
             attributionControl: false,
           });
 
-          // Carto dark basemap requires no Google/Mapbox key. Fall back to
-          // standard OpenStreetMap tiles if the dark tile host is unavailable.
-          const cartoTiles = L.tileLayer(
-            "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png",
-            { maxZoom: 19, subdomains: "abcd", attribution: "&copy; OpenStreetMap contributors &copy; CARTO" },
-          );
-          let tileErrors = 0;
-          let hasFallback = false;
-          cartoTiles.on("tileerror", () => {
-            tileErrors += 1;
-            if (tileErrors >= 3 && !hasFallback && map) {
-              hasFallback = true;
-              map.removeLayer(cartoTiles);
-              L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-                maxZoom: 19,
-                attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap contributors</a>",
-              }).addTo(map);
-            }
-          });
-          cartoTiles.addTo(map);
+          // Public OpenStreetMap raster tiles do not require a Google or Mapbox API key.
+          L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap contributors</a>",
+          }).addTo(map);
 
           L.control
             .attribution({ position: "bottomright", prefix: false })
@@ -97,7 +82,12 @@ export function JourneyMap({ option, alternatives = [], onSelectAlternative }: J
 
           mapInstanceRef.current = map;
           setIsLeafletReady(true);
-          map.whenReady(() => requestAnimationFrame(() => map.invalidateSize(true)));
+          map.whenReady(() => {
+            requestAnimationFrame(() => {
+              map.invalidateSize(true);
+              window.setTimeout(() => map.invalidateSize(true), 250);
+            });
+          });
         }
       } catch (err) {
         console.warn("Leaflet initialization caught:", err);

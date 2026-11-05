@@ -11,6 +11,14 @@ describe("multi-turn mobility assistant", () => {
     expect(result.reply).not.toContain("Where are you starting");
   });
 
+  it("extracts both endpoints from a Yellow Line request", () => {
+    const result = respond("Show route from Poonamali to Vadapalani on Yellow Line");
+    expect(result.context).toMatchObject({
+      origin: "Poonamallee Bus Stand",
+      destination: "Vadapalani",
+    });
+  });
+
   it("keeps journey context across follow-ups", () => {
     const r1 = respond("How do I travel from Guindy Metro to Chennai Airport?");
     expect(r1.cards[0]).toMatchObject({ kind: "journey" });

@@ -140,7 +140,7 @@ function Index() {
               <div className="mt-4 space-y-3.5 text-xs">
                 {/* User query */}
                 <div className="ml-auto w-fit rounded-2xl rounded-br-xs bg-primary px-4 py-2 text-primary-foreground font-medium shadow-xs">
-                  Koyambedu to Chennai Airport
+                  Try: Poonamali to Vadapalani
                 </div>
 
                 {/* Assistant route preview: canonical names only; no hard-coded fare or schedule */}
@@ -151,11 +151,11 @@ function Index() {
                   </div>
                   <div className="border-t border-border/50 pt-2 text-muted-foreground space-y-1">
                     <div className="flex justify-between items-center text-foreground font-semibold">
-                      <span>Koyambedu → Chennai Airport</span>
+                      <span>Poonamallee → Vadapalani</span>
                       <span className="text-accent font-mono font-bold">Route guidance</span>
                     </div>
                     <p className="text-[11px]">
-                      Board at Koyambedu, change at Alandur, and continue towards Chennai Airport.
+                      I'll match spelling variations, then search Metro, bus and suburban rail for your complete journey.
                       Exact departures and fares are shown only when present in the loaded source data.
                     </p>
                   </div>

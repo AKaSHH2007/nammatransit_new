@@ -132,17 +132,16 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
           ) : null}
         </div>
 
-        <button
-          type="button"
-          onClick={(e) => {
-            e.stopPropagation();
-            setShowModal(true);
-          }}
+        <a
+          href={CHENNAI_ONE_URLS.web}
+          target="_blank"
+          rel="noopener noreferrer"
+          onClick={(e) => e.stopPropagation()}
           className="inline-flex items-center gap-1 rounded-lg bg-[#00D6A3] px-2.5 py-1 text-[11px] font-semibold text-[#07111F] transition hover:bg-[#00D6A3]/90 shadow-sm"
         >
           <Smartphone className="h-3 w-3" />
           <span>Book on Chennai One</span>
-        </button>
+        </a>
 
         {showModal && (
           <BookingGuideModal
@@ -258,17 +257,15 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
 
       {/* Main Action Bar */}
       <div className="mt-4 flex flex-wrap items-center gap-2.5">
-        <button
-          type="button"
-          onClick={() => {
-            setSelectedLegToBook(null);
-            setShowModal(true);
-          }}
+        <a
+          href={CHENNAI_ONE_URLS.web}
+          target="_blank"
+          rel="noopener noreferrer"
           className="flex-1 inline-flex items-center justify-center gap-2 rounded-xl bg-[#00D6A3] px-4 py-2.5 text-xs font-bold text-[#07111F] transition hover:bg-[#00D6A3]/90 shadow-glow"
         >
           <Smartphone className="h-4 w-4" />
           <span>{getBookingActionText()}</span>
-        </button>
+        </a>
 
         <a
           href={CHENNAI_ONE_URLS.web}
