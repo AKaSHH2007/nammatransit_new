@@ -201,60 +201,49 @@ export function calculateJourneyHighlights(
 ): MultimodalJourneyOption[] {
   if (options.length === 0) return options;
 
-  let minDuration = Infinity;
-  let minFare = Infinity;
-  let minTransfers = Infinity;
-  let minWalking = Infinity;
+  const fareVerified = options.filter((option) =>
+    Number.isFinite(option.fare) && option.fare > 0,
+  );
+  const minDuration = Math.min(...options.map((option) => option.durationMinutes).filter((n) => n > 0));
+  const minFare = fareVerified.length
+    ? Math.min(...fareVerified.map((option) => option.fare))
+    : Infinity;
+  const minTransfers = Math.min(...options.map((option) => option.transferCount));
+  const minWalking = Math.min(...options.map((option) => option.walkingDistanceMeters));
 
-  for (const opt of options) {
-    if (opt.durationMinutes < minDuration) minDuration = opt.durationMinutes;
-    if (opt.fare < minFare) minFare = opt.fare;
-    if (opt.transferCount < minTransfers) minTransfers = opt.transferCount;
-    if (opt.walkingDistanceMeters < minWalking) minWalking = opt.walkingDistanceMeters;
-  }
+  const scored = options.map((option) => {
+    // An unavailable fare is neutral, not zero-cost and not a cheapest result.
+    let score = option.durationMinutes +
+      (option.fare > 0 ? option.fare * 0.45 : 0) +
+      option.transferCount * 12 +
+      option.walkingDistanceMeters * 0.015;
 
-  // Calculate composite score for each candidate (lower is better)
-  const scored = options.map((opt) => {
-    let composite =
-      opt.durationMinutes * 1.0 +
-      opt.fare * 0.45 +
-      opt.transferCount * 12 +
-      opt.walkingDistanceMeters * 0.015;
-
-    // Preference discount
-    if (preferredMode && preferredMode !== "any" && opt.modes.includes(preferredMode)) {
-      composite -= 15;
+    if (preferredMode && preferredMode !== "any" && option.modes.includes(preferredMode)) {
+      score -= 15;
     }
 
     const highlights: JourneyHighlight[] = [];
-    if (opt.durationMinutes === minDuration) highlights.push("fastest");
-    if (opt.fare === minFare) highlights.push("cheapest");
-    if (opt.transferCount === minTransfers && opt.transferCount === 0)
-      highlights.push("fewest_transfers");
-    if (opt.walkingDistanceMeters === minWalking) highlights.push("least_walking");
+    if (option.durationMinutes > 0 && option.durationMinutes === minDuration) highlights.push("fastest");
+    if (option.fare > 0 && option.fare === minFare) highlights.push("cheapest");
+    if (option.transferCount === minTransfers && option.transferCount === 0) highlights.push("fewest_transfers");
+    if (option.walkingDistanceMeters === minWalking) highlights.push("least_walking");
 
     return {
-      ...opt,
-      compositeScore: Math.round(composite * 10) / 10,
+      ...option,
+      compositeScore: Math.round(score * 10) / 10,
       highlights,
     };
   });
 
-  // Assign best_overall strictly to minimum composite score
-  const minScore = Math.min(...scored.map((o) => o.compositeScore || 9999));
-  for (const opt of scored) {
-    if (opt.compositeScore === minScore && !opt.highlights.includes("best_overall")) {
-      opt.highlights.unshift("best_overall");
+  const minScore = Math.min(...scored.map((option) => option.compositeScore ?? Infinity));
+  for (const option of scored) {
+    if (option.compositeScore === minScore && !option.highlights.includes("best_overall")) {
+      option.highlights.unshift("best_overall");
     }
   }
 
-  // Sort by composite score (best overall first)
-  scored.sort((a, b) => (a.compositeScore || 0) - (b.compositeScore || 0));
-
-  return scored.map((opt, idx) => ({
-    ...opt,
-    optionNumber: idx + 1,
-  }));
+  scored.sort((a, b) => (a.compositeScore ?? Infinity) - (b.compositeScore ?? Infinity));
+  return scored.map((option, index) => ({ ...option, optionNumber: index + 1 }));
 }
 
 /**
@@ -282,9 +271,30 @@ export async function planMultimodalJourneys(
   const dClean = resolvedDestination.resolved || destination.trim();
 
   if (!oClean || !dClean || oClean.toLowerCase() === dClean.toLowerCase()) return [];
-  if (!isRecognizedChennaiStation(oClean) || !isRecognizedChennaiStation(dClean)) return [];
 
   const options: MultimodalJourneyOption[] = [];
+
+  // Confirm both endpoints against the complete stop list or the Yellow Line
+  // supplement; a hand-maintained canonical list must not exclude GTFS stops.
+  let originInFeed = false;
+  let destinationInFeed = false;
+  try {
+    const { resolvePlannerStop } = await import("../gtfs/planner");
+    const [originMatch, destinationMatch] = await Promise.all([
+      resolvePlannerStop(oClean),
+      resolvePlannerStop(dClean),
+    ]);
+    originInFeed = Boolean(originMatch.name);
+    destinationInFeed = Boolean(destinationMatch.name);
+  } catch (error) {
+    console.warn("GTFS stop index validation failed:", error);
+  }
+  const yellowModule = await import("./yellow-line.data");
+  const originOnYellow = Boolean(yellowModule.matchYellowLineStation(oClean));
+  const destinationOnYellow = Boolean(yellowModule.matchYellowLineStation(dClean));
+  if ((!originInFeed && !originOnYellow) || (!destinationInFeed && !destinationOnYellow)) {
+    return [];
+  }
 
   // Only return bus, Metro and suburban journeys that are present in an actual
   // active GTFS trip. Do not construct bus route numbers, stops, fares or times.
@@ -406,7 +416,7 @@ export async function planMultimodalJourneys(
   // Yellow Line station geometry is supplied separately from the currently
   // loaded GTFS trip timetable. Show its verified station sequence on the map,
   // but deliberately do not invent a departure time, arrival time or fare.
-  if (!options.some((option) => option.modes.includes("metro")) &&
+  if ((!options.some((option) => option.modes.includes("metro")) || originOnYellow || destinationOnYellow) &&
       (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
     try {
       const { getYellowLineTripDetails, getYellowLineServiceInfo } = await import("./yellow-line.data");
@@ -480,7 +490,7 @@ export async function planMultimodalJourneys(
     });
   }
 
-  return filtered;
+  return calculateJourneyHighlights(filtered, preferredMode);
 }
 
 function filterUniqueCandidates(options: MultimodalJourneyOption[]): MultimodalJourneyOption[] {
