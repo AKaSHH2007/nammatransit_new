@@ -359,30 +359,29 @@ export async function planMultimodalJourneys(
 ): Promise<MultimodalJourneyOption[]> {
   const originRaw = origin.trim();
   const destinationRaw = destination.trim();
-  const originYellow = matchYellowLineStation(originRaw);
-  const destinationYellow = matchYellowLineStation(destinationRaw);
-  const resolvedOrigin = resolveLocation(originRaw);
-  const resolvedDestination = resolveLocation(destinationRaw);
-  const oClean = originYellow?.name || resolvedOrigin.resolved || originRaw;
-  const dClean = destinationYellow?.name || resolvedDestination.resolved || destinationRaw;
-  if (!oClean || !dClean || oClean.toLowerCase() === dClean.toLowerCase()) return [];
+  if (!originRaw || !destinationRaw) return [];
 
   const options: MultimodalJourneyOption[] = [];
-  if (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro") {
-    const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
-    if (yellowPath) options.push(yellowPath);
+  const yellowPath = createYellowLineStationPath(originRaw, destinationRaw, travelDate, departureTime);
+  if (yellowPath && (!modeConstraint || modeConstraint === "none" || modeConstraint === "metro")) {
+    options.push(yellowPath);
   }
 
-
-  // Search actual scheduled departures for endpoints that also exist in GTFS.
+  // Query real scheduled trips independently. If either station is absent
+  // from the loaded GTFS feed, keep any verified Yellow Line option above.
   try {
     const { resolvePlannerStop, findDirectJourneys } = await import("../gtfs/planner");
-    const [fromMatch, toMatch] = await Promise.all([
-      resolvePlannerStop(oClean),
-      resolvePlannerStop(dClean),
+    const [originMatch, destinationMatch] = await Promise.all([
+      resolvePlannerStop(originRaw),
+      resolvePlannerStop(destinationRaw),
     ]);
-    if (fromMatch.name && toMatch.name) {
-      const trips = await findDirectJourneys(fromMatch.name, toMatch.name, travelDate, departureTime);
+    if (originMatch.name && destinationMatch.name) {
+      const trips = await findDirectJourneys(
+        originMatch.name,
+        destinationMatch.name,
+        travelDate,
+        departureTime,
+      );
       for (const trip of trips) {
         const mode: TransportMode =
           trip.transportType === "Chennai Metro" ? "metro" :
@@ -390,37 +389,46 @@ export async function planMultimodalJourneys(
           trip.transportType === "Suburban Train" ? "train" : "walk";
         if (mode === "walk" || (modeConstraint && modeConstraint !== "none" && mode !== modeConstraint)) continue;
 
-        const from = trip.origin || fromMatch.name;
-        const to = trip.destination || toMatch.name;
-        const line = trip.lineName || trip.routeName || trip.transportType;
+        const from = trip.origin || originMatch.name;
+        const to = trip.destination || destinationMatch.name;
+        const label = trip.lineName || trip.routeName || trip.transportType;
         const routeNumber = trip.routeNumber || undefined;
         let fare = 0;
         let standardFare: number | null = null;
         let digitalFare: number | undefined;
         try {
-          const fareData = mode === "metro"
+          const fareResult = mode === "metro"
             ? calculateMetroFare(from, to, trip.totalStops)
             : mode === "bus"
               ? calculateBusFare(from, to, routeNumber, trip.totalStops)
               : calculateTrainFare(from, to, trip.totalStops);
-          if (fareData.isAvailable && !fareData.fareUnavailable && fareData.standardFare && fareData.standardFare > 0) {
-            standardFare = fareData.standardFare;
+          if (fareResult.isAvailable && !fareResult.fareUnavailable &&
+              fareResult.standardFare != null && fareResult.standardFare > 0) {
+            standardFare = fareResult.standardFare;
             fare = standardFare;
-            if (fareData.digitalFare && fareData.digitalFare > 0) digitalFare = fareData.digitalFare;
+            if (fareResult.digitalFare != null && fareResult.digitalFare > 0) {
+              digitalFare = fareResult.digitalFare;
+            }
           }
         } catch (error) {
-          console.warn("GTFS fare lookup failed:", error);
+          console.warn("Unable to verify trip fare:", error);
         }
-        const colour = mode === "metro"
-          ? line.toLowerCase().includes("green") ? "#16A34A" : "#2563EB"
-          : mode === "bus" ? "#FFAA47" : "#A78BFA";
+
+        const stops: JourneyStop[] = trip.stops.map((stop) => ({
+          name: stop.name,
+          stopId: stop.stopId,
+          arrival: stop.arrival,
+          departure: stop.departure,
+          latitude: stop.latitude ?? getStationCoordinates(stop.name)?.lat,
+          longitude: stop.longitude ?? getStationCoordinates(stop.name)?.lon,
+        }));
         const leg: JourneyLeg = {
           id: "gtfs-" + trip.tripId,
           mode,
-          lineName: line,
+          lineName: label,
           routeNumber,
-          operator: mode === "metro" ? "Chennai Metro (CMRL)" :
-            mode === "bus" ? "Metropolitan Transport Corporation (MTC)" : "Southern Railway",
+          operator: mode === "metro" ? "Chennai Metro Rail Limited" :
+            mode === "bus" ? "Metropolitan Transport Corporation" : "Southern Railway",
           fromStation: from,
           toStation: to,
           boardStation: from,
@@ -431,23 +439,16 @@ export async function planMultimodalJourneys(
           arrivalTime: trip.arrival,
           durationMinutes: trip.durationMinutes,
           stopsCount: trip.totalStops,
-          intermediateStops: trip.stops.map((stop) => ({
-            name: stop.name,
-            stopId: stop.stopId,
-            arrival: stop.arrival,
-            departure: stop.departure,
-            latitude: stop.latitude ?? getStationCoordinates(stop.name)?.lat,
-            longitude: stop.longitude ?? getStationCoordinates(stop.name)?.lon,
-          })),
+          intermediateStops: stops,
           ...(standardFare !== null ? { standardFare, fareRupees: standardFare } : {}),
           ...(digitalFare !== undefined ? { digitalFare } : {}),
-          color: colour,
+          color: mode === "metro" ? "#2563EB" : mode === "bus" ? "#FFAA47" : "#A78BFA",
           instruction: "Board at " + from + " and alight at " + to + ".",
         };
         options.push({
           id: "gtfs-" + trip.tripId,
-          title: line + " (" + from + " → " + to + ")",
-          description: trip.routeName || trip.transportType + " trip in the loaded GTFS data.",
+          title: label + " (" + from + " → " + to + ")",
+          description: trip.routeName || trip.transportType + " trip from the loaded static GTFS feed.",
           durationMinutes: trip.durationMinutes,
           fare,
           ...(standardFare !== null ? { standardFare } : {}),
@@ -462,26 +463,25 @@ export async function planMultimodalJourneys(
           modes: [mode],
           legs: [leg],
           highlights: [],
-          fareBreakdown: standardFare !== null ? [{ mode, label: line + " fare", amount: standardFare }] : [],
+          fareBreakdown: standardFare !== null ? [{ mode, label: label + " fare", amount: standardFare }] : [],
           scheduleSource: "Static GTFS schedule",
           isLiveTracking: false,
         });
       }
     }
   } catch (error) {
-    console.warn("GTFS journey lookup unavailable:", error);
+    console.warn("GTFS journey planner failed:", error);
   }
 
-  let filtered = options;
-  if (modeConstraint && modeConstraint !== "none") {
-    filtered = filtered.filter((option) => option.modes.includes(modeConstraint));
-  }
-  if (preferredMode && preferredMode !== "any") {
-    filtered = [...filtered].sort((a, b) =>
-      Number(!a.modes.includes(preferredMode)) - Number(!b.modes.includes(preferredMode)),
-    );
-  }
-  return calculateJourneyHighlights(filtered, preferredMode);
+  const filtered = modeConstraint && modeConstraint !== "none"
+    ? options.filter((option) => option.modes.includes(modeConstraint))
+    : options;
+  const prioritized = preferredMode && preferredMode !== "any"
+    ? [...filtered].sort((a, b) =>
+        Number(!a.modes.includes(preferredMode)) - Number(!b.modes.includes(preferredMode)),
+      )
+    : filtered;
+  return calculateJourneyHighlights(prioritized, preferredMode);
 }
 function filterUniqueCandidates(options: MultimodalJourneyOption[]): MultimodalJourneyOption[] {
   const seen = new Set<string>();
