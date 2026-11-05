@@ -102,13 +102,14 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
     }
   };
 
-  const openChennaiOneWeb = (leg?: JourneyLeg | null) => {
-    // Official Chennai One web portal or app deep link
-    window.open(CHENNAI_ONE_URLS.web, "_blank", "noopener,noreferrer");
+  const openChennaiOneWeb = (_leg?: JourneyLeg | null) => {
+    // No documented route-prefill deep link is configured. Navigate directly
+    // to the official portal so popup blockers cannot leave a blank tab.
+    window.location.assign(CHENNAI_ONE_URLS.web);
   };
 
   const openPlayStore = () => {
-    window.open(CHENNAI_ONE_URLS.playStore, "_blank", "noopener,noreferrer");
+    window.location.assign(CHENNAI_ONE_URLS.playStore);
   };
 
   if (compact) {
@@ -406,12 +407,12 @@ function BookingGuideModal({
     : (option.digitalFare ?? Math.round(option.fare * 0.8));
 
   const openApp = () => {
-    // Attempt app URI scheme or fallback to website
-    window.open(CHENNAI_ONE_URLS.web, "_blank", "noopener,noreferrer");
+    // Use the official portal until a documented app deep link is available.
+    window.location.assign(CHENNAI_ONE_URLS.web);
   };
 
   const openStore = () => {
-    window.open(CHENNAI_ONE_URLS.playStore, "_blank", "noopener,noreferrer");
+    window.location.assign(CHENNAI_ONE_URLS.playStore);
   };
 
   return (
