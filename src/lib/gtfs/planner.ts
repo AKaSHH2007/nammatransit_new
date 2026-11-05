@@ -181,22 +181,38 @@ export async function resolvePlannerStop(query: string): Promise<{
   const search = normalize(query);
   if (!search) return { candidates: [], confidence: 0 };
 
+  // Treat common locality/operator suffixes as equivalent while preserving
+  // the actual stop_name from the feed as the canonical returned value.
+  const simplify = (value: string) =>
+    normalize(value)
+      .replace(/\\bchennai\\b/g, " ")
+      .replace(/\\b(?:metro|railway|rail|station|bus stand|bus terminus|stop)\\b/g, " ")
+      .replace(/\\s+/g, " ")
+      .trim();
+  const comparableSearch = simplify(search);
+
   const names = [...new Set([...index.stops.values()]
     .map((stop) => (stop.stop_name || "").trim())
     .filter(Boolean))];
 
-  const exact = names.filter((name) => normalize(name) === search);
+  const exact = names.filter((name) =>
+    normalize(name) === search || simplify(name) === comparableSearch,
+  );
   if (exact.length === 1) return { name: exact[0], candidates: exact, confidence: 1 };
+  if (exact.length > 1) return { candidates: exact.slice(0, 5), confidence: 0.9 };
 
-  const prefix = names.filter((name) => normalize(name).startsWith(search) || search.startsWith(normalize(name)));
+  const prefix = names.filter((name) => {
+    const candidate = simplify(name);
+    return candidate.startsWith(comparableSearch) || comparableSearch.startsWith(candidate);
+  });
   if (prefix.length === 1) return { name: prefix[0], candidates: prefix, confidence: 0.95 };
   if (prefix.length > 1) return { candidates: prefix.slice(0, 5), confidence: 0.8 };
 
   const ranked = names
     .map((name) => {
-      const normalizedName = normalize(name);
-      const distance = levenshtein(search, normalizedName);
-      const maxLength = Math.max(search.length, normalizedName.length);
+      const normalizedName = simplify(name);
+      const distance = levenshtein(comparableSearch, normalizedName);
+      const maxLength = Math.max(comparableSearch.length, normalizedName.length);
       return { name, distance, ratio: maxLength ? (maxLength - distance) / maxLength : 0 };
     })
     .filter((item) => item.distance <= (search.length <= 7 ? 1 : 2) && item.ratio >= 0.78)
