@@ -146,8 +146,10 @@ export function JourneyComparisonCard({
 
         <div className="text-right shrink-0">
           <div className="font-display text-xl font-bold tracking-tight text-foreground font-mono tabular-nums">
-            {option.durationMinutes}{" "}
-            <span className="text-xs font-medium text-muted-foreground">min</span>
+            {option.scheduleSource === "Timetable unavailable" ? "~" + option.durationMinutes : option.durationMinutes}{" "}
+            <span className="text-xs font-medium text-muted-foreground">
+              {option.scheduleSource === "Timetable unavailable" ? "min est." : "min"}
+            </span>
           </div>
           <div className="text-xs font-bold text-accent font-mono tabular-nums">{option.fare > 0 ? "₹" + option.fare : "Fare unavailable"}</div>
           {option.digitalFare && option.digitalFare < option.fare && (
