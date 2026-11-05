@@ -390,13 +390,13 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
         <div>
           <p className="font-semibold text-foreground">
             {option.legs.some((l) => l.lineName?.toLowerCase().includes("yellow"))
-              ? "Official CMRL Phase 2 Yellow Line Grounding"
-              : "Official Chennai Transit Timetable Grounding"}
+              ? "Supplemental Yellow Line station route"
+              : "Static GTFS timetable source"}
           </p>
           <p className="mt-1 leading-relaxed">
             {option.scheduleSource === "Timetable unavailable"
-              ? "The station sequence is available for this Yellow Line route, but the loaded dataset does not contain a verified trip timetable for it. Exact departure and arrival times, and the exact fare, are therefore not displayed. This is not live vehicle tracking."
-              : "Departure and arrival times come from the static GTFS trip data loaded by this application. Static schedules are not live vehicle positions or live delay predictions. Check the operator for last-minute changes."}
+              ? "The Yellow Line station sequence is provided by the supplemental route dataset. The bundled GTFS feed does not currently contain a validated trip timetable or exact fare for this route, so no departure, arrival or fare is estimated here."
+              : "Scheduled times are read from the bundled static GTFS feed (publisher: Ithu Ungal Soththu, version 0.2.0; no feed start/end date supplied). The feed may be incomplete or outdated. These are not live delays or vehicle locations; confirm service changes with the operator."}
           </p>
         </div>
       </div>
