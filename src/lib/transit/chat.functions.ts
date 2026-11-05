@@ -155,6 +155,15 @@ export const sendChat = createServerFn({ method: "POST" })
       }
     }
 
+    // Respect an explicit mode-only request in both the displayed options and
+    // the timetable text; never attach an unrelated Metro schedule to a Bus query.
+    if (modeConstraint && modeConstraint !== "none") {
+      const allowedType =
+        modeConstraint === "metro" ? "Chennai Metro" :
+        modeConstraint === "bus" ? "MTC Bus" : "Suburban Train";
+      gtfsJourneys = gtfsJourneys.filter((journey) => journey.transportType === allowedType);
+    }
+
     // Plan multimodal options (Metro, Bus, Suburban Train, walking transfers)
     let multimodalOptions: Awaited<ReturnType<typeof planMultimodalJourneys>> = [];
     if (origin && destination) {
@@ -177,11 +186,11 @@ export const sendChat = createServerFn({ method: "POST" })
       const firstOption = multimodalOptions[0];
       const scheduleInfo: JourneySchedule = {
         departures: gtfsJourneys.map((journey) => journey.departure),
-        durationMinutes: firstJourney?.durationMinutes || firstOption?.durationMinutes || 15,
+        durationMinutes: firstJourney?.durationMinutes || firstOption?.durationMinutes || 0,
         serviceDate: travelDate || undefined,
         source: gtfsJourneys.length > 0
           ? "Static GTFS schedule"
-          : firstOption?.scheduleSource || "Published service-frequency guidance",
+          : firstOption?.scheduleSource || "Timetable unavailable",
       };
 
       const journeyCardIndex = localReply.cards.findIndex((card) => card.kind === "journey");
@@ -227,9 +236,19 @@ export const sendChat = createServerFn({ method: "POST" })
           ". Exact departure timestamps are included only when present in the source feed; live tracking is not claimed.";
       }
     } else if (origin && destination) {
+      // The local Metro prototype may know a station path even when there is
+      // no matching scheduled trip. Do not display that path as a confirmed
+      // service when the selected date/time has no verified timetable result.
+      localReply.cards = localReply.cards.filter((card) => card.kind !== "journey");
       localReply.context = { ...localReply.context, origin, destination };
-      localReply.reply +=
-        "\n\nNo matching service was found in the configured timetable feeds for this exact pair. Try a nearby stop or a mixed-mode connection.";
+      const requestedModeName =
+        modeConstraint === "metro" ? "Metro" :
+        modeConstraint === "bus" ? "MTC bus" :
+        modeConstraint === "train" ? "suburban train" : "direct transit";
+      localReply.reply =
+        "I couldn't find a verified " + requestedModeName + " departure for " + origin + " → " + destination +
+        (travelDate ? " on " + travelDate : "") +
+        " in the loaded timetable data. This does not prove the route does not exist; the feed may be incomplete or out of date. No departure time or live arrival has been invented.";
     }
     // Do not let a generative response rewrite factual transport results,
     // grievance drafts, fares or timetable data.
