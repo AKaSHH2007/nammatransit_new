@@ -318,11 +318,11 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
             <div className="flex items-center gap-2">
               <Coins className="h-4 w-4 text-accent" />
               <span className="font-display text-xs font-bold uppercase tracking-wider text-foreground">
-                Official Fare Breakdown
+                Fare Breakdown (where available)
               </span>
             </div>
             <span className="text-[10px] text-muted-foreground">
-              Official CMRL / MTC / SR published rates
+              Fare values are source-based; verify with the operator before travel
             </span>
           </div>
 
@@ -367,6 +367,12 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
         </div>
       )}
 
+      {option.fare <= 0 && (
+        <div className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-200">
+          Fare information is not available for this route in the configured fare data. No amount is being estimated here.
+        </div>
+      )}
+
       {/* FEATURE 6: Integrated Chennai One Official Booking Section */}
       <div className="mt-6">
         <ChennaiOneBooking option={option} />
@@ -382,9 +388,9 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
               : "Official Chennai Transit Timetable Grounding"}
           </p>
           <p className="mt-1 leading-relaxed">
-            {option.legs.some((l) => l.lineName?.toLowerCase().includes("yellow"))
-              ? "Includes the operational Chennai Metro Phase 2 Corridor 4 (Poonamallee Bypass ↔ Vadapalani, commenced 11 October 2026). Timetable is grounded in CMRL frequency guidelines (10m peak, 15m off-peak); live vehicle GPS telemetry is not public."
-              : "Schedules, routes and stations are grounded in verified Chennai transit GTFS datasets and official CMRL station-to-station fare matrices. Live GPS vehicle telemetry is not active."}
+            {option.scheduleSource === "Timetable unavailable"
+              ? "The station sequence is available for this Yellow Line route, but the loaded dataset does not contain a verified trip timetable for it. Exact departure and arrival times, and the exact fare, are therefore not displayed. This is not live vehicle tracking."
+              : "Departure and arrival times come from the static GTFS trip data loaded by this application. Static schedules are not live vehicle positions or live delay predictions. Check the operator for last-minute changes."}
           </p>
         </div>
       </div>
