@@ -5,7 +5,8 @@
  * 1. Chennai Metro Rail Limited (CMRL) Official Station-to-Station Fare Table & Distance Slabs
  *    - Source: https://chennaimetrorail.org/cmrl-fare-table/
  *    - Effective: 2024-2026
- *    - Digital / Smart Card Discount: 20% discount for Chennai One / CMRL mobile app / WhatsApp QR
+ *    - Official page lists the last fare update as 22 February 2021.
+ *    - Its separate 20% discounted-fare chart is published by CMRL.
  * 2. MTC and 3. Southern Railway:
  *    Route/station-specific fare tables are not present in this application yet.
  *    Those fares are deliberately returned as unavailable rather than inferred from stop counts.
@@ -111,9 +112,9 @@ export const CMRL_STATION_ZONES: Record<string, string> = {
   "st.thomas mount": "CMRL-SMM",
 };
 
-// CMRL Official Station-to-Station Fare Matrix (from official CMRL fare chart)
-// Key: `${zoneA}_${zoneB}` -> token/counter fare in INR
-// Verified against CMRL GTFS fare_rules.txt & official fare chart 2024-2026
+// CMRL station-to-station fare values transcribed from the official fare chart.
+// Key: `${zoneA}_${zoneB}` -> standard token/counter fare in INR.
+// CMRL's official fare page labels the underlying fare update 22 February 2021.
 const CMRL_OFFICIAL_FARE_TABLE: Record<string, number> = {
   // Key Blue line & Green Line pairs
   "CMRL-SGU_CMRL-SAP": 30, // Guindy -> Airport (₹30 standard token, ₹24 digital)
@@ -323,23 +324,6 @@ export function calculateMetroFare(
     Object.entries(CMRL_STATION_ZONES).find(([k]) => normTo.includes(k) || k.includes(normTo))?.[1];
 
   if (zoneA && zoneB) {
-    if (zoneA === zoneB) {
-      return {
-        mode: "metro",
-        operator: "Chennai Metro (CMRL)",
-        category: "Same Station / Platform Entry",
-        fromStation,
-        toStation,
-        standardFare: 10,
-        digitalFare: 8,
-        discountPercentage: 20,
-        discountNote: "20% discount via Chennai One app",
-        isAvailable: true,
-        source: "CMRL Official Fare Table",
-        effectiveDate: "2024-2026",
-      };
-    }
-
     const key1 = `${zoneA}_${zoneB}`;
     const key2 = `${zoneB}_${zoneA}`;
     const fare = CMRL_OFFICIAL_FARE_TABLE[key1] || CMRL_OFFICIAL_FARE_TABLE[key2];
@@ -355,10 +339,10 @@ export function calculateMetroFare(
         standardFare: fare,
         digitalFare,
         discountPercentage: 20,
-        discountNote: "20% digital ticket discount on Chennai One & CMRL QR",
+        discountNote: "20% discounted fare in the official CMRL fare chart",
         isAvailable: true,
         source: "https://chennaimetrorail.org/cmrl-fare-table/",
-        effectiveDate: "2024-2026",
+        effectiveDate: "2021-02-22",
       };
     }
   }
@@ -375,7 +359,7 @@ export function calculateMetroFare(
     isOfficial: false,
     fareUnavailable: true,
     source: "CMRL Fare Table",
-    effectiveDate: "2024-2026",
+    effectiveDate: "2021-02-22",
   };
 }
 
