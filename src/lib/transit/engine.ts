@@ -260,15 +260,17 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
   const ctx: Context = { ...ctxIn };
   const t = norm(message);
 
-  if (ctx.grievance) {
-    if (has(t, /\bcancel\b/))
-      return {
-        reply: "Complaint draft cancelled. How else can I help?",
-        cards: [],
-        suggestions: defaultChips(ctx),
-        context: { ...ctx, grievance: undefined },
-      };
+  // A new clear intent (especially journey planning) interrupts complaint collection.
+  const transportIntent = /\\b(from|to|travel|route|journey|metro|bus|train|fare|ticket|go|reach|how do i)\\b/.test(t);
+  const mentionsLocations = extractAndResolveLocations(message).origin?.resolved || extractAndResolveLocations(message).destination?.resolved;
+  if (ctx.grievance && /\\bcancel\\b/.test(t)) {
+    return { reply: "Complaint draft cancelled. How else can I help?", cards: [], suggestions: defaultChips(ctx), context: { ...ctx, grievance: undefined } };
+  }
+  if (ctx.grievance && !(transportIntent && mentionsLocations)) {
     return continueGrievance(message, ctx);
+  }
+  if (ctx.grievance && transportIntent && mentionsLocations) {
+    ctx.grievance = undefined;
   }
 
   if (has(t, /complain|complaint|grievance|report (a )?problem|report an issue|report another/)) {
@@ -325,23 +327,26 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
     }
   }
 
-  const fromM = t.match(
-    /\b(?:from|starting from|start from|starting at|board at)\s+(.+?)(?:\s+(?:to|towards|till)\s+|$)/,
-  );
-  const toM = t.match(/\b(?:to|towards|till|going to|reach)\s+(.+)$/);
-  const fromHit = fromM
-    ? resolveLocation(fromM[1] ?? "").resolved || findStations(fromM[1] ?? "")[0]?.name
-    : undefined;
-  const toHit = toM
-    ? resolveLocation(toM[1] ?? "").resolved || findStations(toM[1] ?? "")[0]?.name
-    : undefined;
-  if (fromHit) origin = fromHit;
-  if (toHit) destination = toHit;
-  if (toHit && !fromHit && stations.length >= 2 && stations[0]!.name !== toHit)
-    origin = stations[0]!.name;
-  if (!fromHit && !toHit && stations.length >= 2 && !origin && !destination) {
-    origin = stations[0]!.name;
-    destination = stations[1]!.name;
+  // Extract the two sides of an "X to Y" expression independently.
+  const routePair = t.match(/\\bfrom\\s+(.+?)\\s+to\\s+(.+?)(?:\\?|$)/) || t.match(/^(.+?)\\s+to\\s+(.+?)(?:\\?|$)/);
+  if (routePair) {
+    const left = extractAndResolveLocations(routePair[1] || "");
+    const right = extractAndResolveLocations(routePair[2] || "");
+    const leftName = left.origin?.resolved || left.destination?.resolved || findStations(routePair[1] || "")[0]?.name;
+    const rightName = right.destination?.resolved || right.origin?.resolved || findStations(routePair[2] || "")[0]?.name;
+    if (leftName) origin = leftName;
+    if (rightName) destination = rightName;
+  } else {
+    const fromM = t.match(/\\b(?:starting from|start from|starting at|board at|from)\\s+(.+?)(?:\\s+(?:to|towards|till)\\s+|$)/);
+    const toM = t.match(/\\b(?:to|towards|till|going to|reach)\\s+(.+?)(?:\\?|$)/);
+    const fromHit = fromM ? resolveLocation(fromM[1] ?? "").resolved || findStations(fromM[1] ?? "")[0]?.name : undefined;
+    const toHit = toM ? resolveLocation(toM[1] ?? "").resolved || findStations(toM[1] ?? "")[0]?.name : undefined;
+    if (fromHit) origin = fromHit;
+    if (toHit) destination = toHit;
+    if (!fromHit && !toHit && stations.length >= 2 && !origin && !destination) {
+      origin = stations[0]!.name;
+      destination = stations[1]!.name;
+    }
   }
 
   const wantsFacility = has(t, /accessib|lift|elevator|wheelchair|ramp|facilit|disab/);
