@@ -69,7 +69,7 @@ export const sendChat = createServerFn({ method: "POST" })
 
     const resolveFromFeed = async (slot: typeof locationSlots.origin) => {
       if (!slot?.input) return undefined;
-      if (slot.resolved) return slot.resolved;
+      if (slot.resolved) return { name: slot.resolved };
       const { resolvePlannerStop } = await import("../gtfs/planner");
       const match = await resolvePlannerStop(slot.input);
       if (!match.name && match.candidates.length > 1) return { candidates: match.candidates };
