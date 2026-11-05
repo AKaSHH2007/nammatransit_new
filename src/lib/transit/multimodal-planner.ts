@@ -1445,81 +1445,96 @@ export function getSmartAssistantActionReply(
   activeOptionId: string,
 ): string {
   if (options.length === 0) {
-    return "No route alternatives are currently loaded. Try searching for a journey first.";
+    return "No verified route alternatives are currently available for this origin and destination.";
   }
 
-  const active = options.find((o) => o.id === activeOptionId) || options[0]!;
-  const cheapest = [...options].sort((a, b) => a.fare - b.fare)[0]!;
+  const active = options.find((option) => option.id === activeOptionId) || options[0]!;
+  const fareVerified = options.filter((option) => Number.isFinite(option.fare) && option.fare > 0);
+  const cheapest = fareVerified.length
+    ? [...fareVerified].sort((a, b) => a.fare - b.fare)[0]
+    : undefined;
   const fastest = [...options].sort((a, b) => a.durationMinutes - b.durationMinutes)[0]!;
-  const leastWalking = [...options].sort(
-    (a, b) => a.walkingDistanceMeters - b.walkingDistanceMeters,
-  )[0]!;
-  const direct = options.find((o) => o.transferCount === 0);
-  const metroOpt = options.find((o) => o.modes.includes("metro"));
-  const busOpt = options.find((o) => o.modes.includes("bus"));
+  const direct = options.find((option) => option.transferCount === 0);
+  const metroOpt = options.find((option) => option.modes.includes("metro"));
+  const busOpt = options.find((option) => option.modes.includes("bus"));
   const mixedOpt = options.find(
-    (o) => o.isMixedMode || o.modes.filter((m) => m !== "walk").length > 1,
+    (option) => option.isMixedMode || option.modes.filter((mode) => mode !== "walk").length > 1,
   );
+
+  const fareText = (option: MultimodalJourneyOption) =>
+    option.fare > 0 ? "₹" + option.fare : "fare unavailable";
+  const durationText = (option: MultimodalJourneyOption) =>
+    option.scheduleSource === "Timetable unavailable"
+      ? "approximately " + option.durationMinutes + " minutes (estimated)"
+      : option.durationMinutes + " minutes from the static timetable";
 
   switch (actionId) {
     case "cheaper":
+      if (!cheapest) return "I cannot compare prices because the current route options do not contain verified fares.";
+      if (active.fare <= 0) return "The selected route has no verified fare, so I cannot calculate a saving against it. The lowest verified fare currently available is " + fareText(cheapest) + " for " + cheapest.title + ".";
       if (active.id === cheapest.id) {
-        return `Your current selection (${active.title}) is already the cheapest option at ₹${active.fare}.`;
+        return "Your current selection (" + active.title + ") is already the lowest verified fare at " + fareText(active) + ".";
       }
-      return `Yes! The **${cheapest.title}** costs **₹${cheapest.fare}**, saving you ₹${active.fare - cheapest.fare} compared to ${active.title} (₹${active.fare}). Note: Southern Railway suburban trains (₹5) and MTC ordinary buses provide Chennai's most affordable public transit.`;
+      return "The lowest verified fare is " + fareText(cheapest) + " for " + cheapest.title +
+        ". Your current route fare is " + fareText(active) +
+        ". Confirm the final ticket price with the operator before purchase.";
 
     case "reduce_walking":
-      if (active.walkingDistanceMeters <= leastWalking.walkingDistanceMeters) {
-        return `Your current route has minimal walking (${active.walkingDistanceMeters}m). Station concourses and platforms have direct lift and ramp access.`;
-      }
-      return `To reduce walking, select **${leastWalking.title}** which requires only **${leastWalking.walkingDistanceMeters}m** of walking compared to ${active.walkingDistanceMeters}m on this route.`;
+      return "The current GTFS route results do not contain reliable station-entrance or interchange walking distances. I cannot rank them by walking distance yet.";
 
     case "avoid_changing":
       if (active.transferCount === 0) {
-        return `Great news: **${active.title}** is already a direct service with zero transfers!`;
+        return "Your selected option is a direct service with no transfers.";
       }
       if (direct) {
-        return `To avoid transfers, choose **${direct.title}**. It takes you directly from start to finish with 0 transfers in ~${direct.durationMinutes} mins.`;
+        return "A direct option is available: " + direct.title + ". Its duration is " + durationText(direct) + ".";
       }
-      return `For this corridor, a single transfer provides the fastest transit connection. Follow the clear signage at the interchange concourse.`;
+      return "No verified direct service is present in the loaded timetable for this origin and destination.";
 
     case "fastest":
-      if (active.id === fastest.id) {
-        return `You're looking at the fastest option! **${fastest.title}** reaches your destination in just **${fastest.durationMinutes} minutes**.`;
-      }
-      return `The fastest option is **${fastest.title}**, taking **${fastest.durationMinutes} minutes** (saving ${active.durationMinutes - fastest.durationMinutes} mins over ${active.title}).`;
+      return active.id === fastest.id
+        ? "Your selected option has the shortest calculated duration among the loaded results: " + durationText(fastest) + "."
+        : "The shortest calculated option in the loaded results is " + fastest.title + ", taking " + durationText(fastest) + ".";
 
     case "metro_alternative":
-      if (metroOpt) {
-        const isYellow = metroOpt.legs.some(
-          (l) =>
-            l.lineName?.toLowerCase().includes("yellow") ||
-            l.routeNumber?.toLowerCase().includes("yellow"),
+      if (!metroOpt) return "No verified Metro journey was found in the loaded route data for this origin and destination.";
+      {
+        const yellowLeg = metroOpt.legs.find((leg) =>
+          leg.lineName.toLowerCase().includes("yellow") || leg.routeNumber?.toLowerCase().includes("yellow"),
         );
-        if (isYellow) {
-          return `The Metro option is **${metroOpt.title}** (${metroOpt.durationMinutes} mins, ₹${metroOpt.fare}). Powered by the newly opened Phase 2 Yellow Line (Corridor 4: Poonamallee Bypass ↔ Vadapalani), running 06:00–21:00 with 10-minute peak headway and an integrated interchange to the Green Line at Vadapalani.`;
-        }
-        return `The Metro option is **${metroOpt.title}** (${metroOpt.durationMinutes} mins, ₹${metroOpt.fare}). Chennai Metro runs on dedicated elevated/underground grade, immune to road traffic jams on GST Road and Anna Salai.`;
+        const service = yellowLeg?.serviceFrequency
+          ? " Published Yellow Line frequency: " + yellowLeg.serviceFrequency
+          : "";
+        return "Metro option: " + metroOpt.title + ". Duration: " + durationText(metroOpt) +
+          ". Fare: " + fareText(metroOpt) + "." + service +
+          (metroOpt.scheduleSource === "Timetable unavailable"
+            ? " Exact station-level departures are not present in the loaded Yellow Line data."
+            : " Departure times are scheduled GTFS times, not live tracking.");
       }
-      return "Chennai Metro connects major hubs along the Blue, Green, and newly opened Phase 2 Yellow lines. Look for the nearest Metro station entrance.";
 
     case "bus_alternative":
-      if (busOpt) {
-        return `The Bus option is **${busOpt.title}** (~${busOpt.durationMinutes} mins, ₹${busOpt.fare}). MTC buses serve broad arterial roadside stops throughout the city.`;
-      }
-      return "MTC city buses operate along Chennai's primary arterial corridors with frequent services.";
+      return busOpt
+        ? "Verified bus option: " + busOpt.title + ". Duration: " + durationText(busOpt) +
+          ". Fare: " + fareText(busOpt) + "."
+        : "No direct MTC bus trip between these stops was found in the currently loaded GTFS trips. This does not prove that no bus route exists; the feed may be incomplete.";
 
     case "mixed_alternative":
-      if (mixedOpt) {
-        return `The multimodal option is **${mixedOpt.title}** (~${mixedOpt.durationMinutes} mins, ₹${mixedOpt.fare}). It combines different transit modes to balance speed and coverage.`;
-      }
-      return "Multimodal connections combine bus feeders with fast rail corridors for optimized city travel.";
+      return mixedOpt
+        ? "A verified mixed-mode option is available: " + mixedOpt.title +
+          ". Duration: " + durationText(mixedOpt) + ". Fare: " + fareText(mixedOpt) + "."
+        : "The current planner has not found a fully validated multi-leg transfer journey for this pair. It will not invent connecting buses, stops or interchange times.";
 
-    case "compare_all":
-      return `Comparing all ${options.length} options: **Fastest** is ${fastest.title} (${fastest.durationMinutes}m), **Cheapest** is ${cheapest.title} (₹${cheapest.fare}), and **Fewest Transfers** has ${direct ? "0 transfers" : "1 transfer"}.`;
+    case "compare_all": {
+      const cheapestText = cheapest
+        ? "Lowest verified fare: " + cheapest.title + " (" + fareText(cheapest) + ")."
+        : "No verified fares are available for comparison.";
+      return "Comparing " + options.length + " loaded option(s). Shortest calculated duration: " +
+        fastest.title + " (" + durationText(fastest) + "). " + cheapestText +
+        (direct ? " A direct option is available." : " No direct option is currently loaded.");
+    }
 
     case "miss_bus":
-      return `If you miss this service, Metro trains operate with **5 to 8 minute headway** during peak hours (10 mins non-peak). MTC buses run every **10 to 15 minutes**, and Southern Railway EMUs operate every **10 to 20 minutes**. Your next service is scheduled shortly.`;
+      return "I cannot confirm a live vehicle position or predict a replacement arrival. Check the scheduled departure times shown in the route details and verify current service status with the operator.";
 
     default:
       return "How else can I help optimize your Chennai transit journey?";
