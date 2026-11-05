@@ -6,15 +6,15 @@
  *    - Source: https://chennaimetrorail.org/cmrl-fare-table/
  *    - Effective: 2024-2026
  *    - Digital / Smart Card Discount: 20% discount for Chennai One / CMRL mobile app / WhatsApp QR
- * 2. Metropolitan Transport Corporation (MTC Chennai) Official Stage Fare System
- *    - Source: MTC Tamil Nadu Published Fare Chart
- *    - Categories: Ordinary (Free for women under Vidiyal Payanam Scheme), Express/Deluxe, AC Bus
- * 3. Southern Railway (Chennai Suburban EMU Division)
- *    - Source: Southern Railway Suburban Fare Table (Second Class Ordinary & First Class)
+ * 2. MTC and 3. Southern Railway:
+ *    Route/station-specific fare tables are not present in this application yet.
+ *    Those fares are deliberately returned as unavailable rather than inferred from stop counts.
+ * 4. Yellow Line:
+ *    Its station sequence is available separately, but an authoritative station-pair fare matrix
+ *    has not been loaded. Yellow Line fares are therefore not estimated here.
  */
 
 import type { TransportMode } from "./multimodal-types";
-import { matchYellowLineStation } from "./yellow-line.data";
 
 export interface FareDetail {
   mode: TransportMode;
