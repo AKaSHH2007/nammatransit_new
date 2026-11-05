@@ -259,24 +259,28 @@ const has = (t: string, re: RegExp) => re.test(t);
 export function respond(message: string, ctxIn: Context = {}): ChatReply {
   const ctx: Context = { ...ctxIn };
   const t = norm(message);
+  const extracted = extractAndResolveLocations(message);
+  const hasResolvedLocation = Boolean(extracted.origin?.resolved || extracted.destination?.resolved);
+  const isJourneyIntent =
+    /\b(?:from|to|travel|route|journey|metro|bus|train|fare|ticket|go|reach|how do i|show route)\b/i.test(message) &&
+    hasResolvedLocation;
 
-  // A new clear intent (especially journey planning) interrupts complaint collection.
-  const transportIntent = /\\b(from|to|travel|route|journey|metro|bus|train|fare|ticket|go|reach|how do i)\\b/.test(t);
-  const mentionsLocations = extractAndResolveLocations(message).origin?.resolved || extractAndResolveLocations(message).destination?.resolved;
-  if (ctx.grievance && /\\bcancel\\b/.test(t)) {
-    return { reply: "Complaint draft cancelled. How else can I help?", cards: [], suggestions: defaultChips(ctx), context: { ...ctx, grievance: undefined } };
+  // A new journey request interrupts complaint collection.
+  if (ctx.grievance && /\bcancel\b/i.test(message)) {
+    return {
+      reply: "Complaint draft cancelled. How else can I help?",
+      cards: [],
+      suggestions: defaultChips(ctx),
+      context: { ...ctx, grievance: undefined },
+    };
   }
-  if (ctx.grievance && !(transportIntent && mentionsLocations)) {
-    return continueGrievance(message, ctx);
-  }
-  if (ctx.grievance && transportIntent && mentionsLocations) {
-    ctx.grievance = undefined;
-  }
+  if (ctx.grievance && !isJourneyIntent) return continueGrievance(message, ctx);
+  if (ctx.grievance && isJourneyIntent) ctx.grievance = undefined;
 
   if (has(t, /complain|complaint|grievance|report (a )?problem|report an issue|report another/)) {
     const first = GRIEVANCE_STEPS[0]!;
     return {
-      reply: `I'll help you prepare a complaint draft. ${first.ask}`,
+      reply: "I'll help you prepare a complaint draft. " + first.ask,
       cards: [],
       suggestions: [...first.chips, "Cancel complaint"],
       context: { ...ctx, grievance: { step: "operator", data: {} } },
@@ -285,193 +289,152 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
 
   if (has(t, /alert|disruption|delay|service update|status|closed|strike/)) {
     return {
-      reply:
-        "These are demonstration service alerts from the sample dataset — they are simulated and not live.",
+      reply: "These are demonstration service alerts from the sample dataset — they are simulated and not live.",
       cards: [{ kind: "alerts", alerts: DEMO_ALERTS }],
       suggestions: defaultChips(ctx),
       context: ctx,
     };
   }
 
-  const extracted = extractAndResolveLocations(message);
   if (extracted.disambiguationPrompt) {
     return {
       reply: extracted.disambiguationPrompt,
       cards: [],
-      suggestions:
-        extracted.origin?.ambiguousCandidates ||
-        extracted.destination?.ambiguousCandidates ||
-        defaultChips(ctx),
+      suggestions: extracted.origin?.ambiguousCandidates || extracted.destination?.ambiguousCandidates || defaultChips(ctx),
       context: ctx,
     };
   }
 
   const stations = findStations(message);
-
-  // Slot updates for journeys
-  let origin = ctx.origin,
-    destination = ctx.destination;
-  let typoCorrectionMessage: string | undefined;
-
-  if (extracted.origin?.resolved) {
-    origin = extracted.origin.resolved;
-    if (extracted.origin.isCorrected) {
-      typoCorrectionMessage = `I understood your starting point as ${origin}.`;
-    }
-  }
-
-  if (extracted.destination?.resolved) {
-    destination = extracted.destination.resolved;
-    if (extracted.destination.isCorrected && !typoCorrectionMessage) {
-      typoCorrectionMessage = `I understood your destination as ${destination}.`;
-    }
-  }
-
-  // Extract the two sides of an "X to Y" expression independently.
-  const routePair = t.match(/\\bfrom\\s+(.+?)\\s+to\\s+(.+?)(?:\\?|$)/) || t.match(/^(.+?)\\s+to\\s+(.+?)(?:\\?|$)/);
-  if (routePair) {
-    const left = extractAndResolveLocations(routePair[1] || "");
-    const right = extractAndResolveLocations(routePair[2] || "");
-    const leftName = left.origin?.resolved || left.destination?.resolved || findStations(routePair[1] || "")[0]?.name;
-    const rightName = right.destination?.resolved || right.origin?.resolved || findStations(routePair[2] || "")[0]?.name;
-    if (leftName) origin = leftName;
-    if (rightName) destination = rightName;
-  } else {
-    const fromM = t.match(/\\b(?:starting from|start from|starting at|board at|from)\\s+(.+?)(?:\\s+(?:to|towards|till)\\s+|$)/);
-    const toM = t.match(/\\b(?:to|towards|till|going to|reach)\\s+(.+?)(?:\\?|$)/);
-    const fromHit = fromM ? resolveLocation(fromM[1] ?? "").resolved || findStations(fromM[1] ?? "")[0]?.name : undefined;
-    const toHit = toM ? resolveLocation(toM[1] ?? "").resolved || findStations(toM[1] ?? "")[0]?.name : undefined;
-    if (fromHit) origin = fromHit;
-    if (toHit) destination = toHit;
-    if (!fromHit && !toHit && stations.length >= 2 && !origin && !destination) {
-      origin = stations[0]!.name;
-      destination = stations[1]!.name;
-    }
-  }
-
+  const origin = extracted.origin?.resolved || ctx.origin;
+  const destination = extracted.destination?.resolved || ctx.destination;
   const wantsFacility = has(t, /accessib|lift|elevator|wheelchair|ramp|facilit|disab/);
   const wantsFare = has(t, /fare|cost|price|how much|ticket|charge/);
   const journeyChanged = origin !== ctx.origin || destination !== ctx.destination;
+  const nextContext: Context = { ...ctx, origin, destination, lastStation: origin || ctx.lastStation };
 
   if (wantsFacility) {
-    let station = stations[0]?.name;
-    if (!station)
-      station = has(t, /destination|end|arriv/)
-        ? ctx.destination
-        : has(t, /start|origin|board/)
-          ? ctx.origin
-          : (ctx.lastStation ?? ctx.origin);
-    if (!station)
+    const station = stations[0]?.name ||
+      (has(t, /destination|end|arriv/) ? destination : has(t, /start|origin|board/) ? origin : ctx.lastStation ?? origin);
+    if (!station) {
       return {
         reply: "Which station would you like accessibility information for?",
         cards: [],
         suggestions: ["Is Guindy accessible?", "Lifts at Chennai Central"],
         context: ctx,
       };
+    }
     return {
-      reply: `Here are the published facilities for ${station} (from the sample dataset). Live lift status is not available.`,
+      reply: "Here are the published facilities for " + station + ". Live lift operating status is not available.",
       cards: [{ kind: "facility", station }],
-      suggestions: ["Any service alerts?", ...defaultChips({ ...ctx, lastStation: station })].slice(
-        0,
-        4,
-      ),
+      suggestions: ["Any service alerts?", ...defaultChips({ ...ctx, lastStation: station })].slice(0, 4),
       context: { ...ctx, lastStation: station },
     };
   }
 
-  if (journeyChanged || has(t, /how (do|can|to)|travel|route|go|reach|journey|way/)) {
+  const asksForJourney = journeyChanged || has(t, /how (do|can|to)|travel|route|go|reach|journey|way|show route/);
+  if (asksForJourney) {
     if (origin && destination) {
       if (origin.toLowerCase() === destination.toLowerCase()) {
         return {
-          reply: `Starting station and destination cannot be the same (${origin}). Please choose different start and destination locations.`,
+          reply: "Starting station and destination cannot be the same (" + origin + "). Please choose two different locations.",
           cards: [],
-          suggestions: defaultChips({ ...ctx, origin, destination: undefined }),
-          context: { ...ctx, origin, destination: undefined },
+          suggestions: defaultChips({ ...ctx, destination: undefined }),
+          context: { ...ctx, origin, destination: undefined, grievance: undefined },
         };
       }
-      const j = planJourney(origin, destination);
-      const next = { ...ctx, origin, destination, lastStation: origin };
-      if (!j)
+
+      const journey = planJourney(origin, destination);
+      const updatedContext: Context = { ...nextContext, grievance: undefined };
+      if (!journey) {
         return {
-          reply: `I couldn't find a supported Metro journey from ${origin} to ${destination} in the dataset.`,
+          reply: "I couldn't match a direct Metro route from " + origin + " to " + destination + " in the current Metro station network. I will check the available bus and suburban timetable data separately.",
           cards: [],
-          suggestions: defaultChips(next),
-          context: next,
+          suggestions: ["Show all transport options", "Try another destination"],
+          context: updatedContext,
         };
-      const cards: Card[] = [{ kind: "journey", journey: j }];
-      const officialMetroFare = calculateMetroFare(origin, destination, j.totalStops);
-      const effectiveFare = officialMetroFare.standardFare ?? demoFare(j.totalStops);
-      if (wantsFare) cards.push({ kind: "fare", journey: j, fare: effectiveFare });
-      const via = j.interchange ? ` with a change at ${j.interchange}` : " directly";
-      const prefix = typoCorrectionMessage ? `${typoCorrectionMessage}\n\n` : "";
+      }
+
+      const cards: Card[] = [{ kind: "journey", journey }];
+      const fareDetail = calculateMetroFare(origin, destination, journey.totalStops);
+      const fareIsAvailable = fareDetail.isAvailable && !fareDetail.fareUnavailable &&
+        fareDetail.standardFare !== null && fareDetail.standardFare > 0;
+      if (wantsFare && fareIsAvailable) {
+        cards.push({ kind: "fare", journey, fare: fareDetail.standardFare! });
+      }
+      const via = journey.interchange ? " with a change at " + journey.interchange : " directly";
+      const fareText = fareIsAvailable
+        ? " Published fare shown in the fare card: ₹" + fareDetail.standardFare + "."
+        : " An exact fare is not available for this station pair.";
       return {
-        reply: `${prefix}You can take Chennai Metro from ${origin} to ${destination}${via} — ${j.totalStops} stops (Fare: ₹${effectiveFare}).`,
+        reply: "You can travel by Chennai Metro from " + origin + " to " + destination + via +
+          " — " + journey.totalStops + " stops." + fareText,
         cards,
-        suggestions: [
-          "What is the fare?",
-          "Is the starting station accessible?",
-          `What about starting from ${origin === "Alandur" ? "Guindy" : "Alandur"}?`,
-        ],
-        context: next,
+        suggestions: ["What is the fare?", "Show scheduled departures", "Is the starting station accessible?"],
+        context: updatedContext,
       };
     }
+
     if (origin || destination) {
-      const next = { ...ctx, origin, destination };
+      const updatedContext: Context = { ...ctx, origin, destination, grievance: undefined };
       return {
-        reply: origin
-          ? `Got it, starting from ${origin}. Where would you like to go?`
-          : `Got it, heading to ${destination}. Where are you starting from?`,
+        reply: origin ? "Got it, starting from " + origin + ". Where would you like to go?" :
+          "Got it, heading to " + destination + ". Where are you starting from?",
         cards: [],
-        suggestions: origin
-          ? ["To Chennai Airport", "To Koyambedu"]
-          : ["From Guindy", "From Chennai Central"],
-        context: next,
+        suggestions: origin ? ["To Chennai Airport", "To Koyambedu"] : ["From Guindy", "From Chennai Central"],
+        context: updatedContext,
       };
     }
   }
 
   if (wantsFare) {
-    if (!ctx.origin || !ctx.destination)
+    if (!origin || !destination) {
       return {
         reply: "Tell me your journey first — for example, “Fare from Guindy to Chennai Airport”.",
         cards: [],
         suggestions: ["Fare from Guindy to Chennai Airport"],
         context: ctx,
       };
-    const j = planJourney(ctx.origin, ctx.destination);
-    if (!j)
+    }
+    const journey = planJourney(origin, destination);
+    if (!journey) {
       return {
-        reply: "I couldn't find that journey in the dataset.",
+        reply: "I don't have a verified Metro fare for " + origin + " to " + destination + ".",
         cards: [],
-        suggestions: [],
-        context: ctx,
+        suggestions: ["Show all transport options"],
+        context: nextContext,
       };
+    }
+    const fareDetail = calculateMetroFare(origin, destination, journey.totalStops);
+    if (!fareDetail.isAvailable || fareDetail.fareUnavailable || !fareDetail.standardFare) {
+      return {
+        reply: "The exact published fare for " + origin + " to " + destination + " is not available in the configured fare table.",
+        cards: [],
+        suggestions: ["Show the journey route"],
+        context: nextContext,
+      };
+    }
     return {
-      reply: `For your journey ${j.origin} → ${j.destination}, here is the fare from the sample dataset (illustrative, not official).`,
-      cards: [{ kind: "fare", journey: j, fare: demoFare(j.totalStops) }],
-      suggestions: [
-        "Is the starting station accessible?",
-        "Any service alerts?",
-        "How do I buy a ticket?",
-      ],
-      context: ctx,
+      reply: "For " + origin + " → " + destination + ", the published Metro fare is ₹" + fareDetail.standardFare + ".",
+      cards: [{ kind: "fare", journey, fare: fareDetail.standardFare }],
+      suggestions: ["Show scheduled departures", "How do I buy a ticket?"],
+      context: nextContext,
     };
   }
 
   if (stations.length === 1) {
-    const s = stations[0]!.name;
+    const station = stations[0]!.name;
     return {
-      reply: `What would you like to know about ${s}?`,
+      reply: "What would you like to know about " + station + "?",
       cards: [],
-      suggestions: [`From ${s} to Chennai Airport`, `Is ${s} accessible?`],
-      context: { ...ctx, lastStation: s },
+      suggestions: ["From " + station + " to Chennai Airport", "Is " + station + " accessible?"],
+      context: { ...ctx, lastStation: station },
     };
   }
 
   if (has(t, /^(hi|hello|hey|vanakkam)\b/)) {
     return {
-      reply:
-        "Vanakkam! I can help with Chennai Metro journeys, fares, accessibility, service alerts and complaint drafts.",
+      reply: "Vanakkam! I can help with Chennai Metro, MTC buses, suburban trains, fares, accessibility, service alerts and complaint drafts.",
       cards: [],
       suggestions: defaultChips(ctx),
       context: ctx,
@@ -479,8 +442,7 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
   }
 
   return {
-    reply:
-      "I'm not sure I understood. I can plan Metro journeys, show demo fares, station accessibility, service alerts, or draft a complaint.",
+    reply: "I'm not sure I understood. I can help plan Chennai Metro, MTC bus and suburban rail journeys, check available fares and schedules, explain accessibility, or draft a complaint.",
     cards: [],
     suggestions: defaultChips(ctx),
     context: ctx,
