@@ -185,9 +185,9 @@ export async function resolvePlannerStop(query: string): Promise<{
   // the actual stop_name from the feed as the canonical returned value.
   const simplify = (value: string) =>
     normalize(value)
-      .replace(/\\bchennai\\b/g, " ")
-      .replace(/\\b(?:metro|railway|rail|station|bus stand|bus terminus|stop)\\b/g, " ")
-      .replace(/\\s+/g, " ")
+      .replace(/\bchennai\\b/g, " ")
+      .replace(/\b(?:metro|railway|rail|station|bus stand|bus terminus|stop)\b/g, " ")
+      .replace(/\s+/g, " ")
       .trim();
   const comparableSearch = simplify(search);
 
