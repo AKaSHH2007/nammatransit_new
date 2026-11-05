@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { findDirectJourneys } from "../gtfs/planner";
 import { extractTravelDate, extractDepartureTime } from "./chat.functions";
 import { respond } from "./engine";
+import { getYellowLineServiceInfo } from "./yellow-line.data";
 
 describe("GTFS journey planner and chatbot integration", () => {
   it("extracts ISO travel dates correctly", () => {
@@ -31,6 +32,26 @@ describe("GTFS journey planner and chatbot integration", () => {
     expect(extractDepartureTime("Leave at 14:15:30")).toBe("14:15:30");
     expect(extractDepartureTime("Depart at 9am")).toBe("09:00:00");
     expect(extractDepartureTime("Around 5:30 pm")).toBe("17:30:00");
+  });
+
+
+  it("shows Yellow Line frequency guidance separately from exact departures", () => {
+    const weekday = getYellowLineServiceInfo("2026-11-06");
+    expect(weekday.operatingWindow).toBe("06:00–21:00");
+    expect(weekday.frequencyText).toContain("every 10 minutes");
+    expect(weekday.frequencyText).toContain("every 15 minutes");
+    expect(weekday.isOperatingAtRequestedTime).toBeNull();
+    expect(weekday.notice).toContain("Exact station-level departure times");
+
+    const sunday = getYellowLineServiceInfo("2026-11-08", "09:00");
+    expect(sunday.isOperatingAtRequestedTime).toBe(true);
+    expect(sunday.frequencyText).toContain("Every 15 minutes");
+
+    const early = getYellowLineServiceInfo("2026-11-06", "05:45");
+    const late = getYellowLineServiceInfo("2026-11-06", "21:10");
+    expect(early.isOperatingAtRequestedTime).toBe(false);
+    expect(late.isOperatingAtRequestedTime).toBe(false);
+    expect(early.notice).toContain("outside the published");
   });
 
   it("retrieves actual GTFS direct journeys between Guindy and Airport", async () => {
