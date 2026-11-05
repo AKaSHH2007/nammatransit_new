@@ -73,7 +73,7 @@ const LEGACY_KEY = "nammatransit-conversation";
 const WELCOME: Msg = {
   id: "w",
   role: "assistant",
-  text: "Vanakkam! I'm NammaTransit AI, your Chennai public transit assistant. Ask me anything about Chennai Metro (Blue, Green, and Phase 2 Yellow Line), MTC Buses, Suburban Railway, official station-to-station fares, typo-corrected station search, or booking tickets on Chennai One.",
+  text: "Vanakkam! I'm NammaTransit AI, your Chennai public transit assistant. Ask me anything about Chennai Metro (Blue, Green, and Phase 2 Yellow Line), MTC Buses, Suburban Railway, published fare information where available, typo-corrected station search, or booking tickets on Chennai One.",
 };
 
 const START_CHIPS = [
