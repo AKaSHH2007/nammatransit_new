@@ -52,7 +52,7 @@ const features = [
   {
     icon: Sparkles,
     title: "Intelligent Typo Search",
-    text: "Handles Tamil phonetics, misspellings, and colloquial station names (e.g. Koyeembedu → Koyambedu, Gindi → Guindy).",
+    text: "Automatically resolves spelling variations, phonetic mistakes, and colloquial names across Chennai locations.",
   },
   {
     icon: Navigation,
@@ -140,7 +140,7 @@ function Index() {
               <div className="mt-4 space-y-3.5 text-xs">
                 {/* User query */}
                 <div className="ml-auto w-fit rounded-2xl rounded-br-xs bg-primary px-4 py-2 text-primary-foreground font-medium shadow-xs">
-                  Koyeembedu to Chennai Airport
+                  Koyambedu to Chennai Airport
                 </div>
 
                 {/* Assistant response */}
