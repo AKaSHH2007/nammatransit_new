@@ -271,10 +271,19 @@ function createYellowLineStationPath(
   travelDate?: string,
   departureTime?: string,
 ): MultimodalJourneyOption | null {
-  const from = matchYellowLineStation(fromName);
-  const to = matchYellowLineStation(toName);
-  if (!from || !to) return null;
-  const details = getYellowLineTripDetails(from.name, to.name);
+  const normalize = (value: string) =>
+    value.toLowerCase().replace(/[^a-z0-9]/g, "");
+  const stations = YELLOW_LINE_STATIONS;
+  const fromKey = normalize(fromName);
+  const toKey = normalize(toName);
+  const fromIndex = stations.findIndex((station) => normalize(station.name) === fromKey);
+  const toIndex = stations.findIndex((station) => normalize(station.name) === toKey);
+  if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return null;
+
+  const ordered = fromIndex < toIndex
+    ? stations.slice(fromIndex, toIndex + 1)
+    : stations.slice(toIndex, fromIndex + 1).reverse();
+  const details = getYellowLineTripDetails(ordered[0]!.name, ordered[ordered.length - 1]!.name);
   if (!details) return null;
 
   const service = getYellowLineServiceInfo(travelDate, departureTime);
