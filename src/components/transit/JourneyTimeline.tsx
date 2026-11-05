@@ -114,7 +114,7 @@ export function JourneyTimeline({ option }: JourneyTimelineProps) {
             <span className="font-semibold text-foreground">~{option.durationMinutes} mins</span>
             <span>·</span>
             <span className="font-semibold text-accent font-mono">
-              ₹{option.fare}
+              {option.fare > 0 ? "₹" + option.fare : "Fare unavailable"}
               {option.digitalFare && option.digitalFare < option.fare && (
                 <span className="ml-1 text-[11px] font-normal text-muted-foreground">
                   (₹{option.digitalFare} digital)
