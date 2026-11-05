@@ -347,10 +347,12 @@ export function respond(message: string, ctxIn: Context = {}): ChatReply {
       const journey = planJourney(origin, destination);
       const updatedContext: Context = { ...nextContext, grievance: undefined };
       if (!journey) {
+        // A valid public-transport trip may not be a direct Metro trip.
+        // The server-side multimodal planner also searches MTC and rail feeds.
         return {
-          reply: "I couldn't match a direct Metro route from " + origin + " to " + destination + " in the current Metro station network. I will check the available bus and suburban timetable data separately.",
+          reply: "I have your journey as " + origin + " → " + destination + ". Checking Metro, MTC bus and suburban rail schedules.",
           cards: [],
-          suggestions: ["Show all transport options", "Try another destination"],
+          suggestions: ["Show all transport options", "Show scheduled departures"],
           context: updatedContext,
         };
       }

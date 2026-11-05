@@ -79,7 +79,7 @@ const WELCOME: Msg = {
 const START_CHIPS = [
   "Guindy to Chennai Airport",
   "Koyambedu to Chennai Airport",
-  "Poonamallee Bypass to Vadapalani",
+  "Poonamali to Vadapalani",
   "Tambaram to Guindy",
   "What is the fare for Guindy to Airport?",
 ];
@@ -130,7 +130,7 @@ function ChatPage() {
 
   const activeConversationIdRef = useRef("initial");
   const requestVersionRef = useRef(0);
-  const [isHydrated, setIsHydrated] = useState(false);
+  const hydratedRef = useRef(false);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -184,12 +184,12 @@ function ChatPage() {
       }
     }
 
-    setIsHydrated(true);
+    hydratedRef.current = true;
     inputRef.current?.focus();
   }, []);
 
   useEffect(() => {
-    if (!isHydrated) return;
+    if (!hydratedRef.current) return;
 
     const firstUserMessage = messages.find((message) => message.role === "user");
     const title = firstUserMessage?.text.slice(0, 42) || "New conversation";
@@ -217,7 +217,7 @@ function ChatPage() {
     localStorage.setItem(STORE_KEY, JSON.stringify({ activeId: conversationId, conversations: next }));
     setSavedConversations(next);
     endRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, context, suggestions, conversationId, isHydrated]);
+  }, [messages, context, suggestions, conversationId]);
 
   async function send(text: string) {
     const msg = text.trim();

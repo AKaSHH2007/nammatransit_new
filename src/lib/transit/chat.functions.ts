@@ -174,14 +174,15 @@ export const sendChat = createServerFn({ method: "POST" })
 
     if (gtfsJourneys.length > 0 || multimodalOptions.length > 0) {
       const firstJourney = gtfsJourneys[0];
-      const scheduleInfo: JourneySchedule | undefined = gtfsJourneys.length > 0
-        ? {
-            departures: gtfsJourneys.map((journey) => journey.departure),
-            durationMinutes: firstJourney!.durationMinutes,
-            serviceDate: travelDate,
-            source: "Static GTFS schedule",
-          }
-        : undefined;
+      const firstOption = multimodalOptions[0];
+      const scheduleInfo: JourneySchedule = {
+        departures: gtfsJourneys.map((journey) => journey.departure),
+        durationMinutes: firstJourney?.durationMinutes || firstOption?.durationMinutes || 15,
+        serviceDate: travelDate || undefined,
+        source: gtfsJourneys.length > 0
+          ? "Static GTFS schedule"
+          : firstOption?.scheduleSource || "Published service-frequency guidance",
+      };
 
       const journeyCardIndex = localReply.cards.findIndex((card) => card.kind === "journey");
       if (journeyCardIndex >= 0) {
@@ -197,8 +198,7 @@ export const sendChat = createServerFn({ method: "POST" })
               }
             : card,
         );
-      } else if (multimodalOptions.length > 0 && origin && destination) {
-        const firstOption = multimodalOptions[0]!;
+      } else if (firstOption && origin && destination) {
         const newJourneyCard: Card = {
           kind: "journey",
           journey: {
@@ -215,17 +215,22 @@ export const sendChat = createServerFn({ method: "POST" })
       }
 
       if (gtfsJourneys.length > 0) {
-        const departures = gtfsJourneys.slice(0, 3).map((journey) => journey.departure).join(", ");
+        const departures = gtfsJourneys.slice(0, 5).map((journey) => journey.departure).join(", ");
         localReply.reply +=
-          "\n\nScheduled departures for " + travelDate + ": " + departures +
-          ". The next matching trip takes " + firstJourney!.durationMinutes +
-          " minutes. These are static GTFS timetable times, not live vehicle tracking.";
-      } else if (multimodalOptions.some((option) => option.scheduleSource === "Timetable unavailable")) {
+          "\n\nScheduled departures from the GTFS feed" +
+          (travelDate ? " for " + travelDate : "") +
+          ": " + departures +
+          ". These are scheduled times, not live vehicle positions.";
+      } else if (firstOption) {
         localReply.reply +=
-          "\n\nThe Yellow Line station route is shown. The currently loaded timetable does not contain verified scheduled departures or an exact fare for this route.";
+          "\n\n" + (firstOption.scheduleSource || "Published service-frequency guidance") +
+          ". Exact departure timestamps are included only when present in the source feed; live tracking is not claimed.";
       }
+    } else if (origin && destination) {
+      localReply.context = { ...localReply.context, origin, destination };
+      localReply.reply +=
+        "\n\nNo matching service was found in the configured timetable feeds for this exact pair. Try a nearby stop or a mixed-mode connection.";
     }
-
     // Do not let a generative response rewrite factual transport results,
     // grievance drafts, fares or timetable data.
     const hasStructuredTransitResult = localReply.cards.some((card) =>

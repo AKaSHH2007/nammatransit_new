@@ -2,6 +2,15 @@ import { describe, it, expect } from "vitest";
 import { respond } from "./engine";
 
 describe("multi-turn mobility assistant", () => {
+  it("keeps both endpoints for a bare typo-corrected journey", () => {
+    const result = respond("Poonamali to Vadapalani");
+    expect(result.context).toMatchObject({
+      origin: "Poonamallee Bus Stand",
+      destination: "Vadapalani",
+    });
+    expect(result.reply).not.toContain("Where are you starting");
+  });
+
   it("keeps journey context across follow-ups", () => {
     const r1 = respond("How do I travel from Guindy Metro to Chennai Airport?");
     expect(r1.cards[0]).toMatchObject({ kind: "journey" });

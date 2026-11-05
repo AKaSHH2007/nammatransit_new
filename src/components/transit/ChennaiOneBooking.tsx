@@ -105,11 +105,11 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
   const openChennaiOneWeb = (_leg?: JourneyLeg | null) => {
     // No documented route-prefill deep link is configured. Navigate directly
     // to the official portal so popup blockers cannot leave a blank tab.
-    window.location.assign(CHENNAI_ONE_URLS.web);
+    window.open(CHENNAI_ONE_URLS.web, "_blank", "noopener,noreferrer");
   };
 
   const openPlayStore = () => {
-    window.location.assign(CHENNAI_ONE_URLS.playStore);
+    window.open(CHENNAI_ONE_URLS.playStore, "_blank", "noopener,noreferrer");
   };
 
   if (compact) {

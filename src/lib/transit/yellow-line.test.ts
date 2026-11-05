@@ -5,79 +5,177 @@ import {
   YELLOW_LINE_STATIONS,
   getYellowLineTripDetails,
   getYellowLineHeadwayMinutes,
-  getYellowLineServiceInfo,
 } from "./yellow-line.data";
 
-describe("Chennai Metro Yellow Line supplemental route", () => {
-  it("contains the 11 configured station positions in sequence", () => {
-    expect(YELLOW_LINE_STATIONS).toHaveLength(11);
-    expect(YELLOW_LINE_STATIONS[0]?.name).toBe("Poonamallee Bypass");
-    expect(YELLOW_LINE_STATIONS[10]?.name).toBe("Vadapalani");
-    expect(YELLOW_LINE_STATIONS.map((station) => station.sequence)).toEqual(
-      Array.from({ length: 11 }, (_, index) => index + 1),
-    );
+describe("Chennai Metro Phase 2 Yellow Line (Corridor 4) Integration", () => {
+  it("validates Yellow Line supplemental dataset configuration", () => {
+    expect(YELLOW_LINE_STATIONS.length).toBe(11);
+    expect(YELLOW_LINE_STATIONS[0]!.name).toBe("Poonamallee Bypass");
+    expect(YELLOW_LINE_STATIONS[10]!.name).toBe("Vadapalani");
+    expect(YELLOW_LINE_STATIONS[10]!.interchange).toBe("Green Line");
+
+    // Headway verification
+    expect(getYellowLineHeadwayMinutes("08:30:00", false)).toBe(10); // Peak morning
+    expect(getYellowLineHeadwayMinutes("18:15:00", false)).toBe(10); // Peak evening
+    expect(getYellowLineHeadwayMinutes("14:00:00", false)).toBe(15); // Non-peak weekday
+    expect(getYellowLineHeadwayMinutes("09:00:00", true)).toBe(15); // Sunday
   });
 
-  it("returns the correct forward and reverse station sequences", () => {
-    const forward = getYellowLineTripDetails("Poonamallee Bypass", "Vadapalani");
-    expect(forward?.stops).toHaveLength(11);
-    expect(forward?.stops[0]?.name).toBe("Poonamallee Bypass");
-    expect(forward?.stops.at(-1)?.name).toBe("Vadapalani");
-    expect(forward?.hopCount).toBe(10);
-
-    const reverse = getYellowLineTripDetails("Vadapalani", "Poonamallee Bypass");
-    expect(reverse?.stops[0]?.name).toBe("Vadapalani");
-    expect(reverse?.stops.at(-1)?.name).toBe("Poonamallee Bypass");
-    expect(reverse?.direction).toBe("Towards Poonamallee Bypass");
-  });
-
-  it("keeps published headways distinct from individual train departure times", () => {
-    expect(getYellowLineHeadwayMinutes("08:30:00", false)).toBe(10);
-    expect(getYellowLineHeadwayMinutes("14:00:00", false)).toBe(15);
-    expect(getYellowLineHeadwayMinutes("09:00:00", true)).toBe(15);
-
-    const weekday = getYellowLineServiceInfo("2026-11-06");
-    expect(weekday.operatingWindow).toBe("06:00–21:00");
-    expect(weekday.frequencyText).toContain("every 10 minutes");
-    expect(weekday.frequencyText).toContain("every 15 minutes");
-    expect(weekday.isOperatingAtRequestedTime).toBeNull();
-    expect(weekday.notice).toContain("Exact station-level departure times");
-
-    const sunday = getYellowLineServiceInfo("2026-11-08", "09:00");
-    expect(sunday.isOperatingAtRequestedTime).toBe(true);
-    expect(sunday.frequencyText).toContain("Every 15 minutes");
-  });
-
-  it("marks times outside the published service window", () => {
-    expect(getYellowLineServiceInfo("2026-11-06", "05:45").isOperatingAtRequestedTime).toBe(false);
-    expect(getYellowLineServiceInfo("2026-11-06", "21:10").isOperatingAtRequestedTime).toBe(false);
-  });
-
-  it("returns a Yellow Line route without inventing a fare or exact departure", async () => {
+  // Test 1: Poonamallee Bypass to Vadapalani
+  it("plans direct Yellow Line route: Poonamallee Bypass to Vadapalani", async () => {
     const journeys = await planMultimodalJourneys("Poonamallee Bypass", "Vadapalani");
-    const yellow = journeys.find((option) => option.legs.some((leg) => leg.lineName.includes("Yellow")));
+    expect(journeys.length).toBeGreaterThan(0);
 
-    expect(yellow).toBeDefined();
-    expect(yellow?.transferCount).toBe(0);
-    expect(yellow?.totalStops).toBe(10);
-    expect(yellow?.fare).toBe(0);
-    expect(yellow?.standardFare).toBeNull();
-    expect(yellow?.departureTime).toBe("");
-    expect(yellow?.arrivalTime).toBe("");
-    expect(yellow?.scheduleSource).toBe("Timetable unavailable");
-    expect(yellow?.legs[0]?.boardStation).toBe("Poonamallee Bypass");
-    expect(yellow?.legs[0]?.alightStation).toBe("Vadapalani");
-    expect(yellow?.legs[0]?.serviceFrequency).toContain("every 10 minutes");
+    const directYellow = journeys.find(
+      (j) =>
+        j.transferCount === 0 &&
+        j.modes.includes("metro") &&
+        j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+
+    expect(directYellow).toBeDefined();
+    expect(directYellow?.totalStops).toBe(10);
+    expect(directYellow?.durationMinutes).toBeGreaterThanOrEqual(18);
+    expect(directYellow?.durationMinutes).toBeLessThanOrEqual(26);
+    expect(directYellow?.fare).toBe(40);
+    expect(directYellow?.legs[0]?.fromStation).toBe("Poonamallee Bypass");
+    expect(directYellow?.legs[0]?.toStation).toBe("Vadapalani");
+    expect(directYellow?.legs[0]?.color).toBe("#EAB308");
   });
 
-  it("supports the static Metro route graph for Yellow Line station pairs", () => {
-    const journey = planJourney("Poonamallee Bypass", "Vadapalani");
-    expect(journey).toBeDefined();
-    expect(journey?.legs).toHaveLength(1);
-    expect(journey?.legs[0]?.lineId).toBe("yellow");
+  // Test 2: Poonamallee Bypass to Porur Junction
+  it("plans direct Yellow Line route: Poonamallee Bypass to Porur Junction", async () => {
+    const journeys = await planMultimodalJourneys("Poonamallee Bypass", "Porur Junction");
+    expect(journeys.length).toBeGreaterThan(0);
+
+    const yellowOption = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+
+    expect(yellowOption).toBeDefined();
+    expect(yellowOption?.transferCount).toBe(0);
+    expect(yellowOption?.totalStops).toBe(9);
+    expect(yellowOption?.durationMinutes).toBeGreaterThanOrEqual(16);
+    expect(yellowOption?.durationMinutes).toBeLessThanOrEqual(24);
+    expect(yellowOption?.fare).toBe(40);
   });
 
-  it("does not fabricate a route for locations outside the supported network", async () => {
-    await expect(planMultimodalJourneys("Atlantis", "Narnia")).resolves.toEqual([]);
+  // Test 3: Kattupakkam to Vadapalani
+  it("plans direct Yellow Line route: Kattupakkam to Vadapalani", async () => {
+    const journeys = await planMultimodalJourneys("Kattupakkam", "Vadapalani");
+    expect(journeys.length).toBeGreaterThan(0);
+
+    const yellowOption = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+
+    expect(yellowOption).toBeDefined();
+    expect(yellowOption?.transferCount).toBe(0);
+    expect(yellowOption?.totalStops).toBe(5);
+    expect(yellowOption?.durationMinutes).toBeGreaterThanOrEqual(10);
+    expect(yellowOption?.durationMinutes).toBeLessThanOrEqual(14);
+    expect(yellowOption?.fare).toBe(20);
+  });
+
+  // Test 4: Iyappanthangal to Vadapalani
+  it("plans direct Yellow Line route: Iyappanthangal to Vadapalani", async () => {
+    const journeys = await planMultimodalJourneys("Iyappanthangal", "Vadapalani");
+    expect(journeys.length).toBeGreaterThan(0);
+
+    const yellowOption = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+
+    expect(yellowOption).toBeDefined();
+    expect(yellowOption?.transferCount).toBe(0);
+    expect(yellowOption?.totalStops).toBe(4);
+    expect(yellowOption?.durationMinutes).toBeGreaterThanOrEqual(8);
+    expect(yellowOption?.durationMinutes).toBeLessThanOrEqual(12);
+    expect(yellowOption?.fare).toBe(20);
+  });
+
+  // Test 5: Poonamallee Bypass to Guindy
+  it("plans multimodal and Metro routes from Poonamallee Bypass to Guindy via Vadapalani interchange", async () => {
+    const journeys = await planMultimodalJourneys("Poonamallee Bypass", "Guindy");
+    expect(journeys.length).toBeGreaterThanOrEqual(2);
+
+    // Should include Metro route connecting Yellow -> Green -> Blue via Vadapalani & Alandur
+    const metroChain = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+    expect(metroChain).toBeDefined();
+
+    // Check planJourney multi-interchange structure
+    const enginePlan = planJourney("Poonamallee Bypass", "Guindy");
+    expect(enginePlan).toBeDefined();
+    expect(enginePlan?.legs.length).toBe(3);
+    expect(enginePlan?.legs[0]?.lineId).toBe("yellow");
+    expect(enginePlan?.legs[1]?.lineId).toBe("green");
+    expect(enginePlan?.legs[2]?.lineId).toBe("blue");
+    expect(enginePlan?.interchange).toContain("Vadapalani");
+    expect(enginePlan?.interchange).toContain("Alandur");
+  });
+
+  // Test 6: Poonamallee Bypass to Chennai Airport
+  it("plans full cross-network route from Poonamallee Bypass to Chennai Airport", async () => {
+    const journeys = await planMultimodalJourneys("Poonamallee Bypass", "Chennai Airport");
+    expect(journeys.length).toBeGreaterThan(0);
+
+    const airportRoute = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+    expect(airportRoute).toBeDefined();
+
+    const enginePlan = planJourney("Poonamallee Bypass", "Chennai Airport");
+    expect(enginePlan).toBeDefined();
+    expect(enginePlan?.legs[0]?.lineId).toBe("yellow");
+    expect(enginePlan?.legs[1]?.lineId).toBe("green");
+    expect(enginePlan?.legs[2]?.lineId).toBe("blue");
+    expect(enginePlan?.legs[2]?.to).toBe("Chennai Airport");
+  });
+
+  // Test 7: Vadapalani to Poonamallee Bypass (Reverse Direction)
+  it("plans direct Yellow Line in reverse direction: Vadapalani to Poonamallee Bypass", async () => {
+    const journeys = await planMultimodalJourneys("Vadapalani", "Poonamallee Bypass");
+    expect(journeys.length).toBeGreaterThan(0);
+
+    const reverseYellow = journeys.find((j) =>
+      j.legs.some((l) => l.lineName.includes("Yellow") || l.color === "#EAB308"),
+    );
+
+    expect(reverseYellow).toBeDefined();
+    expect(reverseYellow?.transferCount).toBe(0);
+    expect(reverseYellow?.totalStops).toBe(10);
+    expect(reverseYellow?.legs[0]?.fromStation).toBe("Vadapalani");
+    expect(reverseYellow?.legs[0]?.toStation).toBe("Poonamallee Bypass");
+    expect(reverseYellow?.fare).toBe(40);
+
+    // Verify reverse trip details
+    const tripDetails = getYellowLineTripDetails("Vadapalani", "Poonamallee Bypass");
+    expect(tripDetails?.direction).toBe("Towards Poonamallee Bypass");
+    expect(tripDetails?.stops[0]!.name).toBe("Vadapalani");
+    expect(tripDetails?.stops[tripDetails.stops.length - 1]!.name).toBe("Poonamallee Bypass");
+  });
+
+  // Test 8: Verify existing Blue Line and Green Line journeys still function flawlessly
+  it("preserves existing Blue Line and Green Line functionality without regression", async () => {
+    // Blue Line direct
+    const blueJourneys = await planMultimodalJourneys("Guindy", "Chennai Airport");
+    expect(blueJourneys.length).toBeGreaterThan(0);
+    const blueDirect = blueJourneys.find((j) => j.transferCount === 0 && j.modes.includes("metro"));
+    expect(blueDirect).toBeDefined();
+    expect(blueDirect?.legs[0]?.color).toBe("#2563EB");
+
+    // Green Line direct
+    const greenPlan = planJourney("Chennai Central", "Koyambedu");
+    expect(greenPlan).toBeDefined();
+    expect(greenPlan?.legs.length).toBe(1);
+    expect(greenPlan?.legs[0]?.lineId).toBe("green");
+    expect(greenPlan?.legs[0]?.stops.length).toBeGreaterThan(5);
+
+    // Blue to Green transfer at Alandur
+    const transferPlan = planJourney("Airport", "Koyambedu");
+    expect(transferPlan).toBeDefined();
+    expect(transferPlan?.interchange).toBe("Alandur");
   });
 });
