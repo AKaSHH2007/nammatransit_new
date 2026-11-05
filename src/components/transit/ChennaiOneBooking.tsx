@@ -178,7 +178,9 @@ export function ChennaiOneBooking({ option, compact = false }: ChennaiOneBooking
         </div>
 
         <div className="text-right">
-          <div className="text-xs text-[#94A3B8]">Digital Fare</div>
+          <div className="text-xs text-[#94A3B8]">
+            {option.digitalFare && option.digitalFare > 0 ? "Digital fare" : option.fare > 0 ? "Standard fare" : "Fare"}
+          </div>
           <div className="font-display text-lg font-bold text-[#00D6A3] font-mono tabular-nums">
             {option.digitalFare && option.digitalFare > 0
               ? "₹" + option.digitalFare
